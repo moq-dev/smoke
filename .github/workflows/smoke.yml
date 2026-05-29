@@ -1,0 +1,106 @@
+name: Smoke
+
+on:
+  # Manual on-demand runs.
+  workflow_dispatch:
+  # Nightly: catches breakage from a freshly published wheel / formula / .deb /
+  # npm / go module that a developer wouldn't notice until a user hit it.
+  schedule:
+    - cron: "0 8 * * *"
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: ${{ matrix.os }} / ${{ matrix.channel }}
+    runs-on: ${{ matrix.os }}
+    # The matrix runs in real time (ffmpeg -re pacing + per-subscriber timeouts);
+    # this is just a safety net against a hung relay/client.
+    timeout-minutes: 45
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The Rust binaries ship through three channels that install the same
+          # thing; we test each separately where the OS supports it. The Python /
+          # Go / browser clients always come from their own registries.
+          - os: ubuntu-latest
+            channel: cargo
+          - os: ubuntu-latest
+            channel: apt
+          - os: macos-latest
+            channel: cargo
+          - os: macos-latest
+            channel: brew
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # ── client toolchains ──────────────────────────────────────────────
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - uses: oven-sh/setup-bun@v2
+      - uses: astral-sh/setup-uv@v6
+
+      - name: System deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg curl procps coreutils
+
+      - name: System deps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install ffmpeg coreutils
+          # GNU coreutils provides `timeout` (macOS ships neither it nor pgrep
+          # under those names by default; pgrep exists, timeout does not).
+          echo "$(brew --prefix)/opt/coreutils/libexec/gnubin" >> "$GITHUB_PATH"
+
+      # ── Rust binaries, per channel (left on PATH for smoke.sh) ──────────
+      - name: Install moq-relay + moq-cli (cargo)
+        if: matrix.channel == 'cargo'
+        run: cargo install moq-relay moq-cli
+
+      - name: Install moq-relay + moq-cli (apt)
+        if: matrix.channel == 'apt'
+        run: |
+          curl -fsSL https://apt.moq.dev/moq-archive-keyring.gpg \
+            | sudo tee /usr/share/keyrings/moq-archive-keyring.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/moq-archive-keyring.gpg] https://apt.moq.dev stable main" \
+            | sudo tee /etc/apt/sources.list.d/moq.list
+          sudo apt-get update
+          sudo apt-get install -y moq-relay moq-cli
+
+      - name: Install moq-relay + moq-cli (brew)
+        if: matrix.channel == 'brew'
+        run: |
+          brew tap moq-dev/tap
+          brew install moq-dev/tap/moq-relay moq-dev/tap/moq-cli
+
+      # ── browser deps (Chromium runtime libs on Linux) ──────────────────
+      - name: Playwright system deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cd clients/js
+          bun install
+          bunx playwright install-deps chromium
+
+      # ── run the full interop matrix ────────────────────────────────────
+      # --timeout 30 gives headless Chromium cold-start headroom.
+      - name: Smoke
+        run: |
+          ./smoke.sh \
+            --publishers rust,python,go,js-browser \
+            --subscribers rust,python,go,js-browser \
+            --timeout 30
+
+      # Quick proof the harness can actually report failure.
+      - name: Negative control
+        run: ./smoke.sh --negative --subscribers rust,python

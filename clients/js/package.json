@@ -1,0 +1,13 @@
+{
+  "name": "@moq/smoke-browser",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@moq/publish": "latest",
+    "@moq/watch": "latest"
+  },
+  "devDependencies": {
+    "playwright": "^1.58.2",
+    "vite": "^7.3.1"
+  }
+}

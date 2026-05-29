@@ -1,0 +1,7 @@
+# Per-client build/install artifacts. Everything here is fetched from a public
+# package registry at test time, never committed.
+clients/js/node_modules/
+clients/js/dist/
+clients/python/.venv/
+clients/go/bin/
+*.log
