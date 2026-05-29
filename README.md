@@ -25,7 +25,17 @@ The Rust binaries (`moq-relay`, `moq-cli`) ship through three channels that inst
 
 ## Running locally
 
-You need the relay + CLI on `PATH` plus the toolchains for whichever clients you include:
+The repo ships a Nix flake with every client toolchain (ffmpeg, uv, go, bun, Chromium via Playwright, coreutils, curl, cargo). It pins the same nixpkgs revision as moq-dev/moq, so the store paths are usually already cached:
+
+```bash
+nix develop                       # drops you in a shell with the toolchain
+# then `cargo install moq-relay moq-cli` (or brew/apt), and:
+just full                         # full matrix, --timeout 30
+```
+
+`PLAYWRIGHT_BROWSERS_PATH` is set by the flake, so the browser client uses the nix Chromium. The npm `playwright` in `clients/js/package.json` is pinned to match that Chromium build; bumping the nixpkgs pin means bumping that pin too.
+
+Without Nix, you need the relay + CLI on `PATH` plus the toolchains for whichever clients you include:
 
 ```bash
 cargo install moq-relay moq-cli       # or brew / apt

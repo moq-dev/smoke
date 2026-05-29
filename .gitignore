@@ -2,6 +2,8 @@
 # package registry at test time, never committed.
 clients/js/node_modules/
 clients/js/dist/
+# No committed lockfile: each run must re-resolve @moq/* to the latest published.
+clients/js/bun.lock
 clients/python/.venv/
 clients/go/bin/
 *.log
