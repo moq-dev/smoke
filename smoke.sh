@@ -83,6 +83,9 @@ TMP=$(mktemp -d)
 RELAY_PID=""
 PY=""           # python interpreter with moq-rs installed (set in prepare)
 GO_SMOKE=""     # compiled Go client binary (set in prepare)
+SWIFT_SMOKE=""  # compiled Swift client binary (set in prepare)
+KOTLIN_SMOKE="" # Kotlin run script from `gradle installDist` (set in prepare)
+C_SMOKE=""      # compiled C client binary (set in prepare)
 BROKEN_LANGS="" # clients whose public package failed to install/build
 
 mark_broken() {
@@ -116,20 +119,64 @@ cleanup() {
 }
 trap cleanup EXIT
 
+have() { command -v "$1" >/dev/null 2>&1; }
+
 require_tools() {
+    # Only the relay, CLI, and harness essentials are hard requirements. A missing
+    # per-client toolchain (uv / go / bun / swift / gradle / cc) just marks that
+    # client broken in prepare, so it fails its own cells instead of the whole run.
     local missing=() t
     for t in ffmpeg curl pgrep timeout; do
-        command -v "$t" >/dev/null 2>&1 || missing+=("$t")
+        have "$t" || missing+=("$t")
     done
-    command -v "$RELAY" >/dev/null 2>&1 || missing+=("$RELAY (cargo/brew/apt install moq-relay)")
-    command -v "$MOQ" >/dev/null 2>&1 || missing+=("$MOQ (cargo/brew/apt install moq-cli)")
-    if needs python; then command -v uv >/dev/null 2>&1 || missing+=("uv"); fi
-    if needs go; then command -v go >/dev/null 2>&1 || missing+=("go"); fi
-    if needs js-browser; then command -v bun >/dev/null 2>&1 || missing+=("bun"); fi
+    have "$RELAY" || missing+=("$RELAY (cargo/brew/apt/nix install moq-relay)")
+    have "$MOQ" || missing+=("$MOQ (cargo/brew/apt/nix install moq-cli)")
     if [[ ${#missing[@]} -gt 0 ]]; then
         echo "error: missing required tools: ${missing[*]}" >&2
         exit 1
     fi
+}
+
+# Run swift with the Xcode toolchain. A loaded nix devShell exports SDKROOT /
+# DEVELOPER_DIR pointing at a nix Apple SDK, which the Xcode swiftc rejects;
+# clear those so swift picks its own matching SDK.
+run_swift() {
+    env -u SDKROOT -u DEVELOPER_DIR -u NIX_CFLAGS_COMPILE -u NIX_CFLAGS_LINK \
+        -u CPATH -u LIBRARY_PATH -u MACOSX_DEPLOYMENT_TARGET swift "$@"
+}
+
+# Download the latest libmoq prebuilt release for this platform and compile the C
+# client against it. The tarball ships include/moq.h + lib/libmoq.a.
+c_prepare() {
+    local cc="${CC:-cc}" target os_libs tag ver url root hdr=()
+    have "$cc" || { echo "no C compiler ($cc) on PATH" >&2; return 1; }
+    have curl || { echo "curl required" >&2; return 1; }
+    have jq || { echo "jq required" >&2; return 1; }
+    case "$(uname -s)/$(uname -m)" in
+        Darwin/arm64) target=aarch64-apple-darwin ;;
+        Darwin/x86_64) target=x86_64-apple-darwin ;;
+        Linux/x86_64) target=x86_64-unknown-linux-gnu ;;
+        Linux/aarch64 | Linux/arm64) target=aarch64-unknown-linux-gnu ;;
+        *) echo "unsupported platform: $(uname -s)/$(uname -m)" >&2; return 1 ;;
+    esac
+    case "$(uname -s)" in
+        Darwin) os_libs="-framework CoreFoundation -framework Security" ;;
+        *) os_libs="-lpthread -ldl -lm" ;;
+    esac
+    # Latest libmoq-v* release, never pinned. Authenticated if a token is around
+    # (CI) to dodge the 60/hr anonymous GitHub API limit.
+    [[ -n "${GITHUB_TOKEN:-}" ]] && hdr=(-H "Authorization: Bearer $GITHUB_TOKEN")
+    tag=$(curl -sf "${hdr[@]}" "https://api.github.com/repos/moq-dev/moq/releases?per_page=100" |
+        jq -r '.[].tag_name' | grep '^libmoq-v' | head -1)
+    [[ -n "$tag" ]] || { echo "no libmoq-v* release found" >&2; return 1; }
+    ver=${tag#libmoq-v}
+    url="https://github.com/moq-dev/moq/releases/download/$tag/moq-$ver-$target.tar.gz"
+    echo "libmoq $tag ($target)"
+    mkdir -p "$TMP/libmoq"
+    curl -sfL "$url" | tar xz -C "$TMP/libmoq" || { echo "download/extract failed: $url" >&2; return 1; }
+    root="$TMP/libmoq/moq-$ver-$target"
+    # shellcheck disable=SC2086  # os_libs is a deliberate multi-flag word list
+    "$cc" "$CLIENTS/c/subscribe.c" -I"$root/include" -L"$root/lib" -lmoq $os_libs -o "$C_SMOKE"
 }
 
 # ── setup ───────────────────────────────────────────────────────────────────
@@ -146,7 +193,9 @@ if needs python; then
     echo "installing python client (moq-rs from PyPI)..."
     PY="$TMP/venv/bin/python"
     # Latest published wheel; sdist fallback needs a Rust toolchain + C compiler.
-    if uv venv --quiet "$TMP/venv" && uv pip install --quiet --python "$PY" moq-rs; then :; else
+    if ! have uv; then
+        mark_broken python "uv not found"
+    elif uv venv --quiet "$TMP/venv" && uv pip install --quiet --python "$PY" moq-rs; then :; else
         mark_broken python "uv pip install moq-rs failed"
     fi
 fi
@@ -155,7 +204,9 @@ if needs go; then
     echo "building go client (moq-dev/moq-go from the module proxy)..."
     GO_SMOKE="$TMP/go-smoke"
     # Pull the latest published module, then build the client against it.
-    if (cd "$CLIENTS/go" && go get "github.com/moq-dev/moq-go@latest" && CGO_ENABLED=1 go build -o "$GO_SMOKE" .) >"$TMP/go-build.log" 2>&1; then :; else
+    if ! have go; then
+        mark_broken go "go not found"
+    elif (cd "$CLIENTS/go" && go get "github.com/moq-dev/moq-go@latest" && CGO_ENABLED=1 go build -o "$GO_SMOKE" .) >"$TMP/go-build.log" 2>&1; then :; else
         mark_broken go "go get/build of moq-dev/moq-go failed"
         sed 's/^/        /' "$TMP/go-build.log" >&2 || true
     fi
@@ -168,9 +219,44 @@ if needs js-browser; then
         (cd "$CLIENTS/js" && bun install && bunx vite build) || return 1
         [[ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ]] || (cd "$CLIENTS/js" && bunx playwright install chromium) || return 1
     }
-    if js_prepare >"$TMP/js-build.log" 2>&1; then :; else
+    if ! have bun; then
+        mark_broken js-browser "bun not found"
+    elif js_prepare >"$TMP/js-build.log" 2>&1; then :; else
         mark_broken js-browser "npm install / vite build / playwright failed"
         sed 's/^/        /' "$TMP/js-build.log" >&2 || true
+    fi
+fi
+
+if needs swift; then
+    echo "building swift client (moq-dev/moq-swift via SPM)..."
+    SWIFT_SMOKE="$CLIENTS/swift/.build/debug/smoke"
+    # `from: 0.2.0` + `swift package update` resolves the latest 0.x each run.
+    if ! have swift; then
+        mark_broken swift "swift not found (needs the Xcode toolchain; macOS only)"
+    elif (cd "$CLIENTS/swift" && run_swift package update && run_swift build) >"$TMP/swift-build.log" 2>&1; then :; else
+        mark_broken swift "swift package update / build failed"
+        sed 's/^/        /' "$TMP/swift-build.log" >&2 || true
+    fi
+fi
+
+if needs kotlin; then
+    echo "building kotlin client (dev.moq:moq from Maven Central)..."
+    KOTLIN_SMOKE="$CLIENTS/kotlin/build/install/smoke/bin/smoke"
+    # `latest.release` + disabled dynamic-version caching resolves the newest each run.
+    if ! have gradle; then
+        mark_broken kotlin "gradle not found"
+    elif (cd "$CLIENTS/kotlin" && gradle --quiet --console=plain installDist) >"$TMP/kotlin-build.log" 2>&1; then :; else
+        mark_broken kotlin "gradle installDist failed"
+        sed 's/^/        /' "$TMP/kotlin-build.log" >&2 || true
+    fi
+fi
+
+if needs c; then
+    echo "building c client (libmoq prebuilt release)..."
+    C_SMOKE="$TMP/c-smoke"
+    if c_prepare >"$TMP/c-build.log" 2>&1; then :; else
+        mark_broken c "libmoq download / compile failed"
+        sed 's/^/        /' "$TMP/c-build.log" >&2 || true
     fi
 fi
 
@@ -257,6 +343,15 @@ run_subscriber() {
             ;;
         go)
             "$GO_SMOKE" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
+            ;;
+        swift)
+            "$SWIFT_SMOKE" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
+            ;;
+        kotlin)
+            "$KOTLIN_SMOKE" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
+            ;;
+        c)
+            "$C_SMOKE" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
             ;;
         js-browser)
             # Headless Chromium decodes via WebCodecs; exits 0 once a frame lands.

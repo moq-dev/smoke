@@ -45,6 +45,15 @@
             # go client (go get moq-dev/moq-go); cgo links the prebuilt libmoq_ffi.a
             go
 
+            # kotlin client (dev.moq:moq from Maven Central) on the JVM
+            jdk
+            gradle
+
+            # c client (libmoq prebuilt release): cc comes from stdenv; these fetch
+            # + extract the tarball. (The swift client uses the system Xcode
+            # toolchain, not nix: nixpkgs swift on Darwin clashes with the Xcode SDK.)
+            gnutar
+
             # browser client (npm @moq/watch + @moq/publish)
             bun
             nodejs_24

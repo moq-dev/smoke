@@ -20,6 +20,11 @@ We check that bytes move across implementations, not that H.264 decodes.
 | Python | [PyPI `moq-rs`](https://pypi.org/project/moq-rs/) (import `moq`) | `uv pip install moq-rs` |
 | Go | [`github.com/moq-dev/moq-go`](https://github.com/moq-dev/moq-go) | `go get` |
 | Browser | npm [`@moq/watch`](https://www.npmjs.com/package/@moq/watch) + [`@moq/publish`](https://www.npmjs.com/package/@moq/publish) | `bun add` + Playwright/Chromium |
+| Swift | SPM [`moq-dev/moq-swift`](https://github.com/moq-dev/moq-swift) | `swift build` (macOS, Xcode toolchain) |
+| Kotlin | Maven Central [`dev.moq:moq`](https://central.sonatype.com/artifact/dev.moq/moq) | `gradle` (JVM) |
+| C | [`libmoq`](https://github.com/moq-dev/moq/releases) prebuilt release assets | `cc` + the platform tarball |
+
+Swift, Kotlin, and C **subscribe only**. Every non-browser client publishes through the streaming importer (`publish_media_stream`), which isn't in the published 0.2.x FFI yet, so those FFI wrappers can only subscribe until it ships. Rust and the browser publish today.
 
 The Rust binaries (`moq-relay`, `moq-cli`) ship through four channels that install the *same* binaries. CI treats each as a separate test where the OS supports it: Linux exercises **apt**, **cargo**, **nix**; macOS exercises **brew**, **cargo**, **nix**. `smoke.sh` itself just takes whatever is on `PATH` (or `RELAY_BIN`/`MOQ_BIN`); the channel is chosen by how the binaries are installed:
 
@@ -72,6 +77,10 @@ clients/
   python/smoke.py        publish/subscribe via moq-rs (PyPI)
   go/                     publish/subscribe via moq-dev/moq-go (go get)
   js/                     headless-Chromium publish/subscribe via @moq/watch + @moq/publish (npm)
+  swift/                  subscribe via moq-dev/moq-swift (SPM, macOS)
+  kotlin/                 subscribe via dev.moq:moq (Gradle/JVM)
+  c/subscribe.c          subscribe via libmoq (prebuilt release)
+freshness.sh             enforces the "always latest, no package locks" policy
 .github/workflows/smoke.yml   nightly + on-demand CI matrix (os x channel)
 ```
 
@@ -92,9 +101,9 @@ just check       # lint + freshness
 
 This test tracks the **latest published** packages, so it sometimes runs ahead of a release. A red cell is the signal, not noise. As of this writing:
 
-- **Rust publish/subscribe** and **browser publish/subscribe**: working (`cargo install` / `brew` / `apt` + npm). These are the green baseline.
-- **Python / Go subscribe**: working once their package installs (Python verified against `moq-rs` 0.2.15).
-- **Python / Go publish**: red. Every non-browser client publishes through the streaming importer (`publish_media_stream` / `PublishMediaStream`), which infers frame boundaries from a raw Annex-B pipe. It's in the moq source but not in the published 0.2.15 wheel/module yet, so raw-stream publishing from Python/Go waits on the next release.
+- **Rust publish/subscribe** and **browser publish/subscribe**: working (`cargo install` / `brew` / `apt` / `nix` + npm). These are the green baseline.
+- **Python / Swift / Kotlin / C subscribe**: working, verified end-to-end against the published 0.2.15 packages (`moq-rs`, `moq-dev/moq-swift`, `dev.moq:moq`, `libmoq`).
+- **Python / Go / Swift / Kotlin / C publish**: not wired up. Every non-browser client publishes through the streaming importer (`publish_media_stream` / `PublishMediaStream`), which infers frame boundaries from a raw Annex-B pipe. It's in the moq source but not in the published 0.2.15 FFI yet, so these wrappers can only subscribe until it ships. Python keeps a publisher that fails with a clear message; Swift/Kotlin/C are subscriber-only.
 - **Go (any role)**: red. The published `moq-dev/moq-go` module is currently un-buildable: it's missing the generated `moq.h` header (its `moq.go` does `#include <moq.h>`) and the linux static libs, so `go get` + build fails. Tracked upstream in moq-dev/moq's release-go packaging.
 
 A broken published package fails only its own matrix cells (see `mark_broken` in `smoke.sh`); it never aborts the rest of the run.

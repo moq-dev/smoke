@@ -3,6 +3,9 @@
 clients/js/node_modules/
 clients/js/dist/
 clients/go/bin/
+clients/swift/.build/
+clients/kotlin/.gradle/
+clients/kotlin/build/
 *.log
 
 # No committed PACKAGE lock files: every run must re-resolve the moq packages
@@ -17,6 +20,8 @@ uv.lock
 package-lock.json
 yarn.lock
 pnpm-lock.yaml
+clients/swift/Package.resolved
+clients/kotlin/gradle.lockfile
 
 # direnv / nix-direnv working dir.
 .direnv/

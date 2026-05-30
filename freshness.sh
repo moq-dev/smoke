@@ -20,7 +20,7 @@ json_dep() { grep -oE "\"$1\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$PKG" | sed -
 
 echo "== no committed package lock files =="
 # flake.lock is intentionally excluded: it locks the toolchain, not moq packages.
-locks=$(git ls-files 2>/dev/null | grep -E '(^|/)(go\.sum|bun\.lock|bun\.lockb|Cargo\.lock|uv\.lock|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|Pipfile\.lock)$' || true)
+locks=$(git ls-files 2>/dev/null | grep -E '(^|/)(go\.sum|bun\.lock|bun\.lockb|Cargo\.lock|uv\.lock|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|Pipfile\.lock|Package\.resolved|gradle\.lockfile)$' || true)
 if [[ -n "$locks" ]]; then
     note FAIL "package lock files are checked in (delete them and add to .gitignore):"
     echo "$locks" | sed 's/^/        /'
@@ -44,6 +44,27 @@ if grep -q 'go get "github.com/moq-dev/moq-go@latest"' smoke.sh; then
     note ok "moq-go -> go get @latest"
 else
     note FAIL "smoke.sh no longer go-gets moq-go @latest"
+    fail=1
+fi
+# Swift: `from: "x"` floats to the newest compatible; an `.exact(` pin would not.
+if grep -q '\.exact(' clients/swift/Package.swift; then
+    note FAIL "moq-swift pinned with .exact( (want from:, which floats to latest)"
+    fail=1
+else
+    note ok "moq-swift -> from: (floats to latest)"
+fi
+# Kotlin: a dynamic version (latest.release / +) re-resolves to the newest each run.
+if grep -qE '"dev\.moq:moq:(latest\.release|\+)"' clients/kotlin/build.gradle.kts; then
+    note ok "dev.moq:moq -> dynamic (latest)"
+else
+    note FAIL "dev.moq:moq is not a dynamic latest version in build.gradle.kts"
+    fail=1
+fi
+# C: smoke.sh resolves the newest libmoq-v* release, never a fixed version.
+if grep -q "grep '\^libmoq-v' | head -1" smoke.sh; then
+    note ok "libmoq -> latest release"
+else
+    note FAIL "smoke.sh no longer resolves the latest libmoq-v* release"
     fail=1
 fi
 

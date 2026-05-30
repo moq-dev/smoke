@@ -14,9 +14,10 @@ default *args:
 smoke *args:
     ./smoke.sh {{ args }}
 
-# Full cross-language matrix with browser cold-start headroom.
+# Full cross-language matrix with browser cold-start headroom. Rust + browser
+# publish; everyone subscribes (swift needs the macOS Xcode toolchain).
 full:
-    ./smoke.sh --publishers rust,python,go,js-browser --subscribers rust,python,go,js-browser --timeout 30
+    ./smoke.sh --publishers rust,js-browser --subscribers rust,python,go,swift,kotlin,c,js-browser --timeout 30
 
 # The "nix" channel: get moq-relay + moq-cli from the moq flake itself
 # (a public distribution channel, `nix run github:moq-dev/moq#moq-cli`), instead
