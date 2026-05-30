@@ -139,7 +139,7 @@ jobs:
           subs="rust,python,go,js-browser,kotlin,c"
           if [ "$RUNNER_OS" = "macOS" ]; then subs="$subs,swift"; fi
           ./smoke.sh \
-            --publishers rust,js-browser \
+            --publishers rust,python,js-browser \
             --subscribers "$subs" \
             --timeout 30
 

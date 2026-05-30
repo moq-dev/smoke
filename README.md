@@ -101,9 +101,9 @@ just check       # lint + freshness
 
 This test tracks the **latest published** packages, so it sometimes runs ahead of a release. A red cell is the signal, not noise. As of this writing:
 
-- **Rust publish/subscribe** and **browser publish/subscribe**: working (`cargo install` / `brew` / `apt` / `nix` + npm). These are the green baseline.
-- **Python / Swift / Kotlin / C subscribe**: working, verified end-to-end against the published 0.2.15 packages (`moq-rs`, `moq-dev/moq-swift`, `dev.moq:moq`, `libmoq`).
-- **Python / Go / Swift / Kotlin / C publish**: not wired up. Every non-browser client publishes through the streaming importer (`publish_media_stream` / `PublishMediaStream`), which infers frame boundaries from a raw Annex-B pipe. It's in the moq source but not in the published 0.2.15 FFI yet, so these wrappers can only subscribe until it ships. Python keeps a publisher that fails with a clear message; Swift/Kotlin/C are subscriber-only.
-- **Go (any role)**: red. The published `moq-dev/moq-go` module is currently un-buildable: it's missing the generated `moq.h` header (its `moq.go` does `#include <moq.h>`) and the linux static libs, so `go get` + build fails. Tracked upstream in moq-dev/moq's release-go packaging.
+- **Rust publish/subscribe** and **browser publish/subscribe**: working (`cargo install` / `brew` / `apt` / `nix` + npm). The green baseline.
+- **Python publish/subscribe**: working. `moq-rs` 0.2.16 shipped the streaming importer (`publish_media_stream`), so Python now publishes a raw Annex-B broadcast too, verified end-to-end against rust/swift/c subscribers.
+- **Swift / Kotlin / C subscribe**: working, verified end-to-end against the published 0.2.16 / 0.3.0 packages (`moq-dev/moq-swift`, `dev.moq:moq`, `libmoq`). Subscriber-only by choice.
+- **Go (any role)**: red. The published `moq-dev/moq-go` module is still un-buildable (stuck at v0.2.15): it's missing the generated `moq.h` header (its `moq.go` does `#include <moq.h>`) and the linux static libs, so `go get` + build fails. Tracked upstream in moq-dev/moq's release-go packaging.
 
 A broken published package fails only its own matrix cells (see `mark_broken` in `smoke.sh`); it never aborts the rest of the run.
