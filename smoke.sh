@@ -135,6 +135,10 @@ require_tools() {
 # ── setup ───────────────────────────────────────────────────────────────────
 require_tools
 
+# Surface any "we've drifted off latest" problem up front. Non-fatal here so the
+# matrix still runs; `just freshness` / CI enforce it hard.
+"$SMOKE_DIR/freshness.sh" || echo "WARN: freshness check failed (see above); continuing" >&2
+
 echo "relay:   $(command -v "$RELAY")"
 echo "moq-cli: $(command -v "$MOQ")"
 

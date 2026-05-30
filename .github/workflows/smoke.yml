@@ -92,6 +92,11 @@ jobs:
           bun install
           bunx playwright install-deps chromium
 
+      # Fail loudly if we've drifted off "latest": a committed lock file, a moq
+      # package that stopped being requested at latest, or a stale playwright pin.
+      - name: Freshness
+        run: ./freshness.sh
+
       # ── run the full interop matrix ────────────────────────────────────
       # --timeout 30 gives headless Chromium cold-start headroom.
       - name: Smoke

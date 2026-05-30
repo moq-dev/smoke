@@ -1,10 +1,13 @@
 {
   description = "moq smoke - interop test for the public moq packages";
 
-  # nixpkgs is pinned to the same revision moq-dev/moq locks, so the toolchain
-  # (and the Playwright Chromium) is already in most contributors' nix store.
+  # nixpkgs-unstable, intentionally NOT locked: this repo ships no flake.lock so
+  # every `nix develop` resolves the latest toolchain (and the latest Chromium),
+  # matching the "always test latest" policy. The one version that has to line up
+  # (npm `playwright` <-> this Chromium) is exported below as PLAYWRIGHT_VERSION
+  # and enforced by smoke.sh, so a nixpkgs bump can't silently drift.
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/ebc08544afa77957cc348ba72dc490ec73b87f68";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -20,12 +23,14 @@
           # smoke.sh installs the clients from public registries; this shell only
           # provides the toolchains those installs need. The Rust binaries under
           # test (moq-relay, moq-cli) come from a channel (cargo/brew/apt), not
-          # from here -- though `cargo` is included so `cargo install moq-cli` works.
+          # from here, though `cargo` is included so `cargo install moq-cli` works.
           packages = with pkgs; [
             # orchestrator + harness tools
             just
+            git
             ffmpeg
             curl
+            jq
             coreutils # GNU `timeout` (macOS lacks it)
             procps # `pgrep`
 
@@ -43,16 +48,25 @@
             # browser client (npm @moq/watch + @moq/publish)
             bun
             nodejs_24
-            # Headless Chromium. The npm `playwright` version in clients/js must
-            # match the browser build this ships (chromium-1208 here), so it's
-            # pinned exactly there; bumping nixpkgs means bumping that pin too.
+            # Headless Chromium. The npm `playwright` must match this build; rather
+            # than hardcode it, smoke.sh reads $PLAYWRIGHT_VERSION (below) and fails
+            # if clients/js/package.json pins anything else.
             playwright-driver.browsers
+
+            # `just check` linters
+            shellcheck
+            shfmt
+            actionlint
           ];
 
           shellHook = ''
             # Use the nix-provided Chromium instead of letting Playwright download one.
             export PLAYWRIGHT_BROWSERS_PATH="${pkgs.playwright-driver.browsers}"
             export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
+            # The exact npm `playwright` version that matches the Chromium above.
+            # smoke.sh asserts clients/js/package.json pins this, so a floating
+            # nixpkgs can never leave the pin stale.
+            export PLAYWRIGHT_VERSION="${pkgs.playwright-driver.version}"
           '';
         };
       }

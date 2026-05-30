@@ -2,8 +2,20 @@
 # package registry at test time, never committed.
 clients/js/node_modules/
 clients/js/dist/
-# No committed lockfile: each run must re-resolve @moq/* to the latest published.
-clients/js/bun.lock
-clients/python/.venv/
 clients/go/bin/
 *.log
+
+# No committed lock files: every run must re-resolve to the LATEST published
+# packages (that's the whole point of this repo). freshness.sh enforces this.
+flake.lock
+go.sum
+clients/js/bun.lock
+clients/js/bun.lockb
+Cargo.lock
+uv.lock
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# direnv / nix-direnv working dir.
+.direnv/

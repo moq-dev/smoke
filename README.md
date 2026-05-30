@@ -69,6 +69,17 @@ clients/
 .github/workflows/smoke.yml   nightly + on-demand CI matrix (os x channel)
 ```
 
+## Always the latest (no lock files)
+
+To actually test what a user gets today, this repo commits **no lock files** (`flake.lock`, `go.sum`, `bun.lock`, `Cargo.lock`, `uv.lock`, ... are all gitignored). Every run re-resolves to the latest published versions: `@moq/*` at the `latest` npm tag, `moq-rs` via `uv pip install`, `moq-go` via `go get @latest`, and a floating `nixpkgs-unstable`.
+
+The one version that can't float freely is the npm `playwright`, which must match the Chromium the toolchain ships. The flake exports that version as `PLAYWRIGHT_VERSION`, and `freshness.sh` (run by `just freshness`, by CI, and at the top of `smoke.sh`) fails if the pin in `clients/js/package.json` drifts from it, or if any lock file gets committed, or if a moq package stops being requested at latest. So even the one pin can't go stale silently.
+
+```bash
+just freshness   # enforce the policy
+just check       # lint + freshness
+```
+
 ## Current state
 
 This test tracks the **latest published** packages, so it sometimes runs ahead of a release. A red cell is the signal, not noise. As of this writing:
