@@ -166,7 +166,9 @@ c_prepare() {
     # Latest libmoq-v* release, never pinned. Authenticated if a token is around
     # (CI) to dodge the 60/hr anonymous GitHub API limit.
     [[ -n "${GITHUB_TOKEN:-}" ]] && hdr=(-H "Authorization: Bearer $GITHUB_TOKEN")
-    tag=$(curl -sf "${hdr[@]}" "https://api.github.com/repos/moq-dev/moq/releases?per_page=100" |
+    # macOS ships bash 3.2, where "${hdr[@]}" on an empty array trips `set -u`;
+    # the ${arr[@]+...} guard expands to nothing when the array is unset/empty.
+    tag=$(curl -sf ${hdr[@]+"${hdr[@]}"} "https://api.github.com/repos/moq-dev/moq/releases?per_page=100" |
         jq -r '.[].tag_name' | grep '^libmoq-v' | head -1)
     [[ -n "$tag" ]] || { echo "no libmoq-v* release found" >&2; return 1; }
     ver=${tag#libmoq-v}
@@ -411,7 +413,9 @@ run_round() {
     fi
     local want_pass=1 got
     [[ "$NEGATIVE" -eq 1 ]] && want_pass=0
-    for i in "${!pids[@]}"; do
+    # ${arr[@]+...} guard: a round may have no live subscribers (all broken),
+    # and bash 3.2 (macOS) errors on "${!pids[@]}" for an empty array under `set -u`.
+    for i in ${pids[@]+"${!pids[@]}"}; do
         if wait "${pids[$i]}"; then got=1; else got=0; fi
         if [[ "$got" -eq "$want_pass" ]]; then
             echo "  PASS  $pub -> ${names[$i]}"
