@@ -34,6 +34,13 @@ for dep in @moq/watch @moq/publish; do
     ver=$(json_dep "$dep")
     if [[ "$ver" == "latest" ]]; then note ok "$dep -> \"$ver\""; else note FAIL "$dep pinned to \"$ver\" (want \"latest\")"; fail=1; fi
 done
+# The jsDelivr CDN variant must not pin @version, so it serves the latest release.
+if grep -qE 'cdn\.jsdelivr\.net/npm/@moq/[a-z-]+@[0-9]' clients/js/jsdelivr/index.html; then
+    note FAIL "jsdelivr/index.html pins a @moq version (drop @x.y.z so the CDN serves latest)"
+    fail=1
+else
+    note ok "jsdelivr @moq/* -> unpinned (latest)"
+fi
 if grep -q 'uv pip install --quiet --python "$PY" moq-rs' smoke.sh; then
     note ok "moq-rs -> uv pip install (unpinned)"
 else

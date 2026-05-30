@@ -19,7 +19,7 @@ We check that bytes move across implementations, not that H.264 decodes.
 | `moq-relay` + `moq-cli` (Rust) | crates.io / Homebrew tap / apt repo / the moq flake | `cargo install`, `brew install moq-dev/tap/...`, `apt install`, `nix build github:moq-dev/moq#...` |
 | Python | [PyPI `moq-rs`](https://pypi.org/project/moq-rs/) (import `moq`) | `uv pip install moq-rs` |
 | Go | [`github.com/moq-dev/moq-go`](https://github.com/moq-dev/moq-go) | `go get` |
-| Browser | npm [`@moq/watch`](https://www.npmjs.com/package/@moq/watch) + [`@moq/publish`](https://www.npmjs.com/package/@moq/publish) | `bun add` + Playwright/Chromium |
+| Browser | npm [`@moq/watch`](https://www.npmjs.com/package/@moq/watch) + [`@moq/publish`](https://www.npmjs.com/package/@moq/publish), delivered three ways | headless Chromium (Playwright) loading a **vite** bundle, an **esbuild** bundle, or straight from the **jsDelivr** ESM CDN |
 | Swift | SPM [`moq-dev/moq-swift`](https://github.com/moq-dev/moq-swift) | `swift build` (macOS, Xcode toolchain) |
 | Kotlin | Maven Central [`dev.moq:moq`](https://central.sonatype.com/artifact/dev.moq/moq) | `gradle` (JVM) |
 | C | [`libmoq`](https://github.com/moq-dev/moq/releases) prebuilt release assets | `cc` + the platform tarball |
@@ -31,6 +31,12 @@ The Rust binaries (`moq-relay`, `moq-cli`) ship through four channels that insta
 - **cargo** / **brew** / **apt** put the binaries on `PATH` (`cargo install moq-relay moq-cli`, etc.).
 - **nix** builds them from the moq flake (`just nix-channel`), the same outputs `nix run github:moq-dev/moq#moq-cli` resolves. The moq flake is referenced ad-hoc with `--refresh`, so the moq version is always the latest default-branch build, never locked by this repo.
 
+The **browser** client is itself three delivery variants of the *same* page, run as separate matrix cells, to catch breakage specific to how the package is consumed:
+
+- `js-vite` — bundled by [vite](https://vite.dev/).
+- `js-esbuild` — bundled by [esbuild](https://esbuild.github.io/) (a different bundler).
+- `js-jsdelivr` — no bundler, no install: the page `import`s the packages straight from the [jsDelivr](https://www.jsdelivr.com/) ESM CDN (`https://cdn.jsdelivr.net/npm/@moq/watch/element/+esm`), which resolves the export map and bundles the dep graph.
+
 ## Running locally
 
 The repo ships a Nix flake (`.envrc` auto-loads it via direnv) with every client toolchain: ffmpeg, uv, go, bun, Node, Chromium via Playwright, cargo, coreutils, jq, and the linters. It does **not** carry the moq binaries; those come from a channel.
@@ -41,7 +47,7 @@ nix develop                       # drops you in a shell with the toolchain
 cargo install moq-relay moq-cli   # (or brew / apt)
 just full                         # full matrix, --timeout 30
 # ...or use the moq flake as the channel (builds moq, no install needed):
-just nix-channel --publishers rust,js-browser --subscribers rust,python,js-browser --timeout 30
+just nix-channel --publishers rust,js-vite --subscribers rust,python,js-jsdelivr --timeout 30
 ```
 
 `PLAYWRIGHT_BROWSERS_PATH` is set by the flake, so the browser client uses the nix Chromium. The npm `playwright` in `clients/js/package.json` is pinned to match that Chromium build (enforced by `freshness.sh`); bumping nixpkgs means bumping that pin too.
@@ -55,9 +61,8 @@ cargo install moq-relay moq-cli       # or brew / apt
 # default matrix is rust-only:
 ./smoke.sh
 
-# full matrix:
-./smoke.sh --publishers rust,python,go,js-browser \
-           --subscribers rust,python,go,js-browser --timeout 30
+# full matrix (browser variants: js-vite, js-esbuild, js-jsdelivr):
+just full   # or: ./smoke.sh --publishers rust,python,js-vite --subscribers rust,js-jsdelivr ...
 
 # point at a specific build instead of PATH:
 RELAY_BIN=/path/to/moq-relay MOQ_BIN=/path/to/moq-cli ./smoke.sh
@@ -76,7 +81,8 @@ smoke.toml               relay config (anonymous, self-signed localhost)
 clients/
   python/smoke.py        publish/subscribe via moq-rs (PyPI)
   go/                     publish/subscribe via moq-dev/moq-go (go get)
-  js/                     headless-Chromium publish/subscribe via @moq/watch + @moq/publish (npm)
+  js/                     headless-Chromium publish/subscribe via @moq/watch + @moq/publish;
+                          three delivery variants: vite, esbuild, jsdelivr (shared jsdelivr/setup.js)
   swift/                  subscribe via moq-dev/moq-swift (SPM, macOS)
   kotlin/                 subscribe via dev.moq:moq (Gradle/JVM)
   c/subscribe.c          subscribe via libmoq (prebuilt release)
@@ -101,7 +107,7 @@ just check       # lint + freshness
 
 This test tracks the **latest published** packages, so it sometimes runs ahead of a release. A red cell is the signal, not noise. As of this writing:
 
-- **Rust publish/subscribe** and **browser publish/subscribe**: working (`cargo install` / `brew` / `apt` / `nix` + npm). The green baseline.
+- **Rust publish/subscribe** and **browser publish/subscribe** (all three delivery variants: vite, esbuild, jsDelivr): working (`cargo install` / `brew` / `apt` / `nix` + npm/CDN). The green baseline.
 - **Python publish/subscribe**: working. `moq-rs` 0.2.16 shipped the streaming importer (`publish_media_stream`), so Python now publishes a raw Annex-B broadcast too, verified end-to-end against rust/swift/c subscribers.
 - **Swift / Kotlin / C subscribe**: working, verified end-to-end against the published 0.2.16 / 0.3.0 packages (`moq-dev/moq-swift`, `dev.moq:moq`, `libmoq`). Subscriber-only by choice.
 - **Go (any role)**: red. The published `moq-dev/moq-go` module is still un-buildable (stuck at v0.2.15): it's missing the generated `moq.h` header (its `moq.go` does `#include <moq.h>`) and the linux static libs, so `go get` + build fails. Tracked upstream in moq-dev/moq's release-go packaging.

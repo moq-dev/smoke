@@ -130,16 +130,18 @@ jobs:
         run: ./freshness.sh
 
       # ── run the full interop matrix ────────────────────────────────────
-      # Publishers: rust + browser publish today; python/go/swift/kotlin/c need
-      # the unreleased streaming importer, so they subscribe only for now.
+      # Publishers: rust, python, and the three browser variants publish today;
+      # go/swift/kotlin/c subscribe only (go's module is also currently broken).
+      # Browser variants: js-vite, js-esbuild (bundlers), js-jsdelivr (CDN).
       # Swift needs the Xcode toolchain, so it's a macOS-only subscriber.
       # --timeout 30 gives headless Chromium cold-start headroom.
       - name: Smoke
         run: |
-          subs="rust,python,go,js-browser,kotlin,c"
+          browser="js-vite,js-esbuild,js-jsdelivr"
+          subs="rust,python,go,kotlin,c,$browser"
           if [ "$RUNNER_OS" = "macOS" ]; then subs="$subs,swift"; fi
           ./smoke.sh \
-            --publishers rust,python,js-browser \
+            --publishers "rust,python,$browser" \
             --subscribers "$subs" \
             --timeout 30
 

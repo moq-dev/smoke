@@ -212,18 +212,35 @@ if needs go; then
     fi
 fi
 
-if needs js-browser; then
-    echo "installing browser client (@moq/watch + @moq/publish from npm)..."
-    # Nix provides Chromium via PLAYWRIGHT_BROWSERS_PATH; otherwise fetch it.
-    js_prepare() {
-        (cd "$CLIENTS/js" && bun install && bunx vite build) || return 1
-        [[ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ]] || (cd "$CLIENTS/js" && bunx playwright install chromium) || return 1
-    }
+# The browser client ships three delivery variants (js-vite, js-esbuild,
+# js-jsdelivr) that all drive the same <moq-publish>/<moq-watch> elements; they
+# differ only in how the published npm packages reach the page.
+if needs js-vite || needs js-esbuild || needs js-jsdelivr; then
+    echo "installing browser clients (@moq/watch + @moq/publish from npm)..."
     if ! have bun; then
-        mark_broken js-browser "bun not found"
-    elif js_prepare >"$TMP/js-build.log" 2>&1; then :; else
-        mark_broken js-browser "npm install / vite build / playwright failed"
-        sed 's/^/        /' "$TMP/js-build.log" >&2 || true
+        for v in js-vite js-esbuild js-jsdelivr; do mark_broken "$v" "bun not found"; done
+    else
+        js_base() {
+            (cd "$CLIENTS/js" && bun install) || return 1
+            # Nix provides Chromium via PLAYWRIGHT_BROWSERS_PATH; otherwise fetch it.
+            [[ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ]] || (cd "$CLIENTS/js" && bunx playwright install chromium) || return 1
+        }
+        if js_base >"$TMP/js-base.log" 2>&1; then
+            # jsdelivr imports from the CDN at runtime, so it needs no build. The
+            # bundler variants each build their own page; a build failure fails
+            # only that variant.
+            if needs js-vite && ! (cd "$CLIENTS/js" && bunx vite build) >"$TMP/js-vite.log" 2>&1; then
+                mark_broken js-vite "vite build failed"
+                sed 's/^/        /' "$TMP/js-vite.log" >&2 || true
+            fi
+            if needs js-esbuild && ! (cd "$CLIENTS/js" && bun build-esbuild.ts) >"$TMP/js-esbuild.log" 2>&1; then
+                mark_broken js-esbuild "esbuild build failed"
+                sed 's/^/        /' "$TMP/js-esbuild.log" >&2 || true
+            fi
+        else
+            for v in js-vite js-esbuild js-jsdelivr; do mark_broken "$v" "bun install / playwright failed"; done
+            sed 's/^/        /' "$TMP/js-base.log" >&2 || true
+        fi
     fi
 fi
 
@@ -312,10 +329,11 @@ start_publisher() {
         go)
             (ffmpeg_h264 | "$GO_SMOKE" publish --url "$URL" --broadcast "$broadcast") >"$log" 2>&1 &
             ;;
-        js-browser)
+        js-vite | js-esbuild | js-jsdelivr)
             # Headless Chromium encodes its own H.264 from a fake camera via
-            # WebCodecs (lazily, once a subscriber creates demand).
-            (cd "$CLIENTS/js" && bun driver.ts publish \
+            # WebCodecs (lazily, once a subscriber creates demand). The variant
+            # selects how the published packages reach the page.
+            (cd "$CLIENTS/js" && bun driver.ts publish --variant "${lang#js-}" \
                 --url "$URL" --broadcast "$broadcast") >"$log" 2>&1 &
             ;;
         *)
@@ -353,9 +371,9 @@ run_subscriber() {
         c)
             "$C_SMOKE" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
             ;;
-        js-browser)
+        js-vite | js-esbuild | js-jsdelivr)
             # Headless Chromium decodes via WebCodecs; exits 0 once a frame lands.
-            (cd "$CLIENTS/js" && bun driver.ts subscribe \
+            (cd "$CLIENTS/js" && bun driver.ts subscribe --variant "${lang#js-}" \
                 --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT")
             ;;
         *)

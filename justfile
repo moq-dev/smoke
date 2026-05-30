@@ -6,7 +6,8 @@
 # registries on each run; you bring moq-relay + moq-cli on PATH (cargo/brew/apt).
 
 # Run the smoke matrix (default: rust only). Pass flags through, e.g.
-#   just smoke --publishers rust,python,go,js-browser --subscribers rust,python,go,js-browser
+#   just smoke --publishers rust,python,js-vite --subscribers rust,python,js-jsdelivr
+# Browser variants: js-vite, js-esbuild, js-jsdelivr (vite/esbuild bundlers, jsDelivr CDN).
 default *args:
     ./smoke.sh {{ args }}
 
@@ -17,7 +18,7 @@ smoke *args:
 # Full cross-language matrix with browser cold-start headroom. Rust + browser
 # publish; everyone subscribes (swift needs the macOS Xcode toolchain).
 full:
-    ./smoke.sh --publishers rust,python,js-browser --subscribers rust,python,go,swift,kotlin,c,js-browser --timeout 30
+    ./smoke.sh --publishers rust,python,js-vite,js-esbuild,js-jsdelivr --subscribers rust,python,go,swift,kotlin,c,js-vite,js-esbuild,js-jsdelivr --timeout 30
 
 # The "nix" channel: get moq-relay + moq-cli from the moq flake itself
 # (a public distribution channel, `nix run github:moq-dev/moq#moq-cli`), instead

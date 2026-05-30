@@ -1,11 +1,15 @@
 // Drives a headless Chromium (channel "chromium" for WebTransport + WebCodecs)
-// against the prebuilt page in dist/. publish streams a fake camera until killed;
-// subscribe exits 0 once the watch element decodes a frame.
+// against a prebuilt page. publish streams a fake camera until killed; subscribe
+// exits 0 once the watch element decodes a frame.
 //
-// Build the page once first: `vite build` (the smoke harness does this).
+// --variant selects how the published packages are delivered to the page:
+//   vite      bundled by vite           -> dist-vite/
+//   esbuild   bundled by esbuild        -> dist-esbuild/
+//   jsdelivr  imported from the CDN      -> jsdelivr/ (no build)
+// The smoke harness builds the bundler variants first; jsdelivr needs no build.
 //
-//   bun driver.ts publish   --url http://127.0.0.1:4443 --broadcast b.hang
-//   bun driver.ts subscribe --url http://127.0.0.1:4443 --broadcast b.hang --timeout 20
+//   bun driver.ts publish   --variant vite --url http://127.0.0.1:4443 --broadcast b.hang
+//   bun driver.ts subscribe --variant jsdelivr --url http://127.0.0.1:4443 --broadcast b.hang --timeout 20
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { chromium } from "playwright";
@@ -15,6 +19,7 @@ const { positionals, values } = parseArgs({
 	options: {
 		url: { type: "string" },
 		broadcast: { type: "string" },
+		variant: { type: "string", default: "vite" },
 		timeout: { type: "string", default: "20" },
 	},
 });
@@ -22,8 +27,15 @@ const { positionals, values } = parseArgs({
 const role = positionals[0];
 const url = values.url;
 const broadcast = values.broadcast;
-if ((role !== "publish" && role !== "subscribe") || !url || !broadcast) {
-	console.error("usage: driver.ts publish|subscribe --url U --broadcast B [--timeout S]");
+const variant = values.variant ?? "vite";
+const dirByVariant: Record<string, string> = {
+	vite: "dist-vite",
+	esbuild: "dist-esbuild",
+	jsdelivr: "jsdelivr",
+};
+const dir = dirByVariant[variant];
+if ((role !== "publish" && role !== "subscribe") || !url || !broadcast || !dir) {
+	console.error("usage: driver.ts publish|subscribe --variant vite|esbuild|jsdelivr --url U --broadcast B [--timeout S]");
 	process.exit(2);
 }
 const timeoutMs = Number.parseFloat(values.timeout ?? "20") * 1000;
@@ -31,15 +43,15 @@ const timeoutMs = Number.parseFloat(values.timeout ?? "20") * 1000;
 // Serve the prebuilt page on localhost (a secure context, so WebTransport /
 // WebCodecs are enabled). A plain static server avoids running concurrent Vite
 // dev servers, which deadlock on the shared dep-optimizer cache.
-const dist = join(new URL(".", import.meta.url).pathname, "dist");
+const root = join(new URL(".", import.meta.url).pathname, dir);
 const server = Bun.serve({
 	port: 0,
 	async fetch(req) {
 		let path = new URL(req.url).pathname;
 		if (path === "/") path = "/index.html";
-		const file = Bun.file(join(dist, path));
+		const file = Bun.file(join(root, path));
 		if (await file.exists()) return new Response(file);
-		return new Response(Bun.file(join(dist, "index.html"))); // SPA fallback
+		return new Response(Bun.file(join(root, "index.html"))); // SPA fallback
 	},
 });
 const pageUrl = `http://localhost:${server.port}/?role=${role}&url=${encodeURIComponent(url)}&broadcast=${encodeURIComponent(broadcast)}`;
@@ -62,7 +74,7 @@ try {
 	await page.goto(pageUrl, { waitUntil: "load" });
 
 	if (role === "publish") {
-		console.error(`publishing ${broadcast} (fake camera) to ${url}`);
+		console.error(`publishing ${broadcast} (fake camera, ${variant}) to ${url}`);
 		await new Promise(() => {}); // stream until the orchestrator kills us
 	} else {
 		const start = Date.now();
@@ -86,7 +98,7 @@ try {
 			}
 			await new Promise((r) => setTimeout(r, 250));
 		}
-		console.error(`decoded ${frames} frames from ${broadcast}`);
+		console.error(`decoded ${frames} frames from ${broadcast} (${variant})`);
 		code = frames > 0 ? 0 : 1;
 	}
 } finally {

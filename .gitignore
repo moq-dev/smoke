@@ -1,7 +1,8 @@
 # Per-client build/install artifacts. Everything here is fetched from a public
 # package registry at test time, never committed.
 clients/js/node_modules/
-clients/js/dist/
+clients/js/dist-vite/
+clients/js/dist-esbuild/
 clients/go/bin/
 clients/swift/.build/
 clients/kotlin/.gradle/
