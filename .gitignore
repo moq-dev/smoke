@@ -3,6 +3,7 @@
 clients/js/node_modules/
 clients/js/dist-vite/
 clients/js/dist-esbuild/
+clients/js-native/node_modules/
 clients/go/bin/
 clients/swift/.build/
 clients/kotlin/.gradle/
@@ -16,6 +17,8 @@ clients/kotlin/build/
 go.sum
 clients/js/bun.lock
 clients/js/bun.lockb
+clients/js-native/bun.lock
+clients/js-native/bun.lockb
 Cargo.lock
 uv.lock
 package-lock.json

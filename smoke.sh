@@ -246,6 +246,23 @@ if needs js-vite || needs js-esbuild || needs js-jsdelivr; then
     fi
 fi
 
+# Native (non-browser) JS: the published @moq/net + @moq/hang under a runtime
+# with no native WebTransport, using the @fails-components/webtransport polyfill.
+# Run under bun (js-native-bun) and node (js-native-node).
+if needs js-native-bun || needs js-native-node; then
+    echo "installing native-js client (@moq/net + @moq/hang + webtransport polyfill)..."
+    if ! have bun; then
+        for v in js-native-bun js-native-node; do mark_broken "$v" "bun not found (needed to install)"; done
+    elif (cd "$CLIENTS/js-native" && bun install) >"$TMP/js-native.log" 2>&1; then
+        if needs js-native-node && ! have node; then
+            mark_broken js-native-node "node not found"
+        fi
+    else
+        for v in js-native-bun js-native-node; do mark_broken "$v" "bun install failed"; done
+        sed 's/^/        /' "$TMP/js-native.log" >&2 || true
+    fi
+fi
+
 if needs swift; then
     echo "building swift client (moq-dev/moq-swift via SPM)..."
     SWIFT_SMOKE="$CLIENTS/swift/.build/debug/smoke"
@@ -376,6 +393,16 @@ run_subscriber() {
         js-vite | js-esbuild | js-jsdelivr)
             # Headless Chromium decodes via WebCodecs; exits 0 once a frame lands.
             (cd "$CLIENTS/js" && bun driver.ts subscribe --variant "${lang#js-}" \
+                --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT")
+            ;;
+        js-native-bun)
+            # Native @moq/net via the WebTransport polyfill, under bun.
+            (cd "$CLIENTS/js-native" && bun subscribe.ts subscribe \
+                --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT")
+            ;;
+        js-native-node)
+            # Same, under node (tsx runs the TS directly).
+            (cd "$CLIENTS/js-native" && node --import tsx subscribe.ts subscribe \
                 --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT")
             ;;
         *)
