@@ -16,24 +16,30 @@ We check that bytes move across implementations, not that H.264 decodes.
 
 | Client | Source under test | Install |
 |---|---|---|
-| `moq-relay` + `moq-cli` (Rust) | crates.io / Homebrew tap / apt repo | `cargo install`, `brew install moq-dev/tap/...`, `apt install` |
+| `moq-relay` + `moq-cli` (Rust) | crates.io / Homebrew tap / apt repo / the moq flake | `cargo install`, `brew install moq-dev/tap/...`, `apt install`, `nix build github:moq-dev/moq#...` |
 | Python | [PyPI `moq-rs`](https://pypi.org/project/moq-rs/) (import `moq`) | `uv pip install moq-rs` |
 | Go | [`github.com/moq-dev/moq-go`](https://github.com/moq-dev/moq-go) | `go get` |
 | Browser | npm [`@moq/watch`](https://www.npmjs.com/package/@moq/watch) + [`@moq/publish`](https://www.npmjs.com/package/@moq/publish) | `bun add` + Playwright/Chromium |
 
-The Rust binaries (`moq-relay`, `moq-cli`) ship through three channels that install the *same* binaries. CI treats each as a separate test where the OS supports it: macOS exercises **brew** and **cargo**; Linux exercises **apt** and **cargo**. `smoke.sh` itself just takes whatever is on `PATH`; the channel is chosen by how CI installs it.
+The Rust binaries (`moq-relay`, `moq-cli`) ship through four channels that install the *same* binaries. CI treats each as a separate test where the OS supports it: Linux exercises **apt**, **cargo**, **nix**; macOS exercises **brew**, **cargo**, **nix**. `smoke.sh` itself just takes whatever is on `PATH` (or `RELAY_BIN`/`MOQ_BIN`); the channel is chosen by how the binaries are installed:
+
+- **cargo** / **brew** / **apt** put the binaries on `PATH` (`cargo install moq-relay moq-cli`, etc.).
+- **nix** builds them from the moq flake (`just nix-channel`), the same outputs `nix run github:moq-dev/moq#moq-cli` resolves. The moq flake is referenced ad-hoc with `--refresh`, so the moq version is always the latest default-branch build, never locked by this repo.
 
 ## Running locally
 
-The repo ships a Nix flake with every client toolchain (ffmpeg, uv, go, bun, Chromium via Playwright, coreutils, curl, cargo). It pins the same nixpkgs revision as moq-dev/moq, so the store paths are usually already cached:
+The repo ships a Nix flake (`.envrc` auto-loads it via direnv) with every client toolchain: ffmpeg, uv, go, bun, Node, Chromium via Playwright, cargo, coreutils, jq, and the linters. It does **not** carry the moq binaries; those come from a channel.
 
 ```bash
 nix develop                       # drops you in a shell with the toolchain
-# then `cargo install moq-relay moq-cli` (or brew/apt), and:
+# then either bring the binaries via a channel...
+cargo install moq-relay moq-cli   # (or brew / apt)
 just full                         # full matrix, --timeout 30
+# ...or use the moq flake as the channel (builds moq, no install needed):
+just nix-channel --publishers rust,js-browser --subscribers rust,python,js-browser --timeout 30
 ```
 
-`PLAYWRIGHT_BROWSERS_PATH` is set by the flake, so the browser client uses the nix Chromium. The npm `playwright` in `clients/js/package.json` is pinned to match that Chromium build; bumping the nixpkgs pin means bumping that pin too.
+`PLAYWRIGHT_BROWSERS_PATH` is set by the flake, so the browser client uses the nix Chromium. The npm `playwright` in `clients/js/package.json` is pinned to match that Chromium build (enforced by `freshness.sh`); bumping nixpkgs means bumping that pin too.
 
 Without Nix, you need the relay + CLI on `PATH` plus the toolchains for whichever clients you include:
 
@@ -69,11 +75,13 @@ clients/
 .github/workflows/smoke.yml   nightly + on-demand CI matrix (os x channel)
 ```
 
-## Always the latest (no lock files)
+## Always the latest moq packages (no package lock files)
 
-To actually test what a user gets today, this repo commits **no lock files** (`flake.lock`, `go.sum`, `bun.lock`, `Cargo.lock`, `uv.lock`, ... are all gitignored). Every run re-resolves to the latest published versions: `@moq/*` at the `latest` npm tag, `moq-rs` via `uv pip install`, `moq-go` via `go get @latest`, and a floating `nixpkgs-unstable`.
+To test what a user gets today, this repo commits **no package lock files** (`go.sum`, `bun.lock`, `Cargo.lock`, `uv.lock`, ... are gitignored). Every run re-resolves the moq packages to their latest published versions: `@moq/*` at the `latest` npm tag, `moq-rs` via `uv pip install`, `moq-go` via `go get @latest`, and the **nix** channel builds the moq flake ad-hoc with `--refresh`.
 
-The one version that can't float freely is the npm `playwright`, which must match the Chromium the toolchain ships. The flake exports that version as `PLAYWRIGHT_VERSION`, and `freshness.sh` (run by `just freshness`, by CI, and at the top of `smoke.sh`) fails if the pin in `clients/js/package.json` drifts from it, or if any lock file gets committed, or if a moq package stops being requested at latest. So even the one pin can't go stale silently.
+`flake.lock` *is* committed: it pins the dev **toolchain** (nixpkgs), not the moq packages, so the shell is reproducible. The moq flake is never an input here, so locking the toolchain never locks moq.
+
+The one version that can't float freely is the npm `playwright`, which must match the Chromium the toolchain ships. The flake exports that version as `PLAYWRIGHT_VERSION`, and `freshness.sh` (run by `just freshness`, by CI, and at the top of `smoke.sh`) fails if the pin in `clients/js/package.json` drifts from it, if a *package* lock file gets committed, or if a moq package stops being requested at latest. So even the one pin can't go stale silently; bump the toolchain with `nix flake update` and the pin together.
 
 ```bash
 just freshness   # enforce the policy

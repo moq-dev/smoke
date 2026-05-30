@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Guard the "always test the latest published packages" policy:
-#   1. no committed lock files, so every run re-resolves to the latest;
+#   1. no committed PACKAGE lock files (go.sum, bun.lock, Cargo.lock, ...), so
+#      every run re-resolves the moq packages to their latest. flake.lock is
+#      fine: it pins the dev toolchain, not the moq packages, and the moq "nix"
+#      channel references the moq flake ad-hoc so the moq version is never locked;
 #   2. the moq packages under test are requested as "latest", never pinned;
 #   3. the one unavoidable pin (npm `playwright`, which must match the toolchain's
-#      Chromium build) equals what the toolchain ships, so a floating nixpkgs
-#      can't quietly leave it stale.
+#      Chromium build) equals what the toolchain ships, so a toolchain bump can't
+#      quietly leave it stale.
 #
 # Run standalone (`just freshness`) or as the opening step of smoke.sh.
 set -euo pipefail
@@ -15,10 +18,11 @@ fail=0
 note() { printf '  %-5s %s\n' "$1" "$2"; }
 json_dep() { grep -oE "\"$1\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$PKG" | sed -E 's/.*"([^"]*)"$/\1/'; }
 
-echo "== no committed lock files =="
-locks=$(git ls-files 2>/dev/null | grep -E '(^|/)(flake\.lock|go\.sum|bun\.lock|bun\.lockb|Cargo\.lock|uv\.lock|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|Pipfile\.lock)$' || true)
+echo "== no committed package lock files =="
+# flake.lock is intentionally excluded: it locks the toolchain, not moq packages.
+locks=$(git ls-files 2>/dev/null | grep -E '(^|/)(go\.sum|bun\.lock|bun\.lockb|Cargo\.lock|uv\.lock|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|Pipfile\.lock)$' || true)
 if [[ -n "$locks" ]]; then
-    note FAIL "lock files are checked in (delete them and add to .gitignore):"
+    note FAIL "package lock files are checked in (delete them and add to .gitignore):"
     echo "$locks" | sed 's/^/        /'
     fail=1
 else

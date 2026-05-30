@@ -5,9 +5,10 @@ clients/js/dist/
 clients/go/bin/
 *.log
 
-# No committed lock files: every run must re-resolve to the LATEST published
-# packages (that's the whole point of this repo). freshness.sh enforces this.
-flake.lock
+# No committed PACKAGE lock files: every run must re-resolve the moq packages
+# under test to their LATEST published versions. freshness.sh enforces this.
+# (flake.lock is allowed: it pins the dev toolchain, not the moq packages, and
+# the moq "nix" channel references the moq flake ad-hoc so it's never locked.)
 go.sum
 clients/js/bun.lock
 clients/js/bun.lockb
