@@ -1,25 +1,24 @@
 // Native-JS (non-browser) subscriber: run the published @moq/net + @moq/hang
-// packages under a JS runtime that has no native WebTransport, using the
-// @fails-components/webtransport polyfill (the same one @moq/clock uses). Runs
-// under both bun and node (via tsx) -- see the smoke harness.
+// packages under a JS runtime that has no native WebTransport, using moq's own
+// @moq/web-transport polyfill (a prebuilt NAPI QUIC/HTTP3 addon). Runs under both
+// node and bun -- see the smoke harness.
 //
 // Connect, read the .hang catalog to find the video track, subscribe it, and
 // exit 0 as soon as any non-empty frame arrives (1 on timeout).
 //
-//   bun subscribe.ts subscribe --url http://127.0.0.1:4443 --broadcast b.hang --timeout 20
+//   node --import tsx subscribe.ts subscribe --url http://127.0.0.1:4443 --broadcast b.hang --timeout 20
 //
 // Subscribe-only: publishing media needs a WebCodecs encoder, which a native JS
 // runtime doesn't have. Reading raw container frames needs no codec.
-import { quicheLoaded, WebTransport } from "@fails-components/webtransport";
-
-// Polyfill WebTransport for bun/node, then import @moq/net (connect() picks up
-// globalThis.WebTransport).
-// @ts-ignore - assigning the polyfill onto globalThis
-globalThis.WebTransport = WebTransport;
-
 import { parseArgs } from "node:util";
 import * as Catalog from "@moq/hang/catalog";
 import * as Moq from "@moq/net";
+import { install } from "@moq/web-transport";
+
+// globalThis.WebTransport = the polyfill (no-op if a native one already exists).
+// @moq/net's connect() reads globalThis.WebTransport at call time, so this just
+// has to run before run() below.
+install();
 
 const { positionals, values } = parseArgs({
 	allowPositionals: true,
@@ -75,9 +74,6 @@ async function run(): Promise<void> {
 		connection.close(); // returns void, not a promise
 	}
 }
-
-// Wait for the polyfill's quiche backend to load before connecting.
-await quicheLoaded;
 
 const timeout = new Promise<never>((_, reject) =>
 	setTimeout(() => reject(new Error("timed out waiting for data")), timeoutMs),

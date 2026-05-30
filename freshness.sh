@@ -34,8 +34,8 @@ for dep in @moq/watch @moq/publish; do
     ver=$(json_dep "$dep")
     if [[ "$ver" == "latest" ]]; then note ok "$dep -> \"$ver\""; else note FAIL "$dep pinned to \"$ver\" (want \"latest\")"; fail=1; fi
 done
-# The native-JS client (@moq/net + @moq/hang under bun/node) must also be latest.
-for dep in @moq/net @moq/hang; do
+# The native-JS client (@moq/net + @moq/hang + @moq/web-transport) must also be latest.
+for dep in @moq/net @moq/hang @moq/web-transport; do
     ver=$(grep -oE "\"$dep\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" clients/js-native/package.json | sed -E 's/.*"([^"]*)"$/\1/')
     if [[ "$ver" == "latest" ]]; then note ok "$dep -> \"$ver\""; else note FAIL "$dep pinned to \"$ver\" (want \"latest\")"; fail=1; fi
 done

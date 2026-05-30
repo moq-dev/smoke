@@ -20,12 +20,12 @@ We check that bytes move across implementations, not that H.264 decodes.
 | Python | [PyPI `moq-rs`](https://pypi.org/project/moq-rs/) (import `moq`) | `uv pip install moq-rs` |
 | Go | [`github.com/moq-dev/moq-go`](https://github.com/moq-dev/moq-go) | `go get` |
 | Browser | npm [`@moq/watch`](https://www.npmjs.com/package/@moq/watch) + [`@moq/publish`](https://www.npmjs.com/package/@moq/publish), delivered three ways | headless Chromium (Playwright) loading a **vite** bundle, an **esbuild** bundle, or straight from the **jsDelivr** ESM CDN |
-| Native JS | npm [`@moq/net`](https://www.npmjs.com/package/@moq/net) + [`@moq/hang`](https://www.npmjs.com/package/@moq/hang) + the [`@fails-components/webtransport`](https://www.npmjs.com/package/@fails-components/webtransport) polyfill | non-browser runtimes: **node** and **bun** |
+| Native JS | npm [`@moq/net`](https://www.npmjs.com/package/@moq/net) + [`@moq/hang`](https://www.npmjs.com/package/@moq/hang) + moq's own [`@moq/web-transport`](https://www.npmjs.com/package/@moq/web-transport) polyfill | non-browser runtimes: **node** and **bun** |
 | Swift | SPM [`moq-dev/moq-swift`](https://github.com/moq-dev/moq-swift) | `swift build` (macOS, Xcode toolchain) |
 | Kotlin | Maven Central [`dev.moq:moq`](https://central.sonatype.com/artifact/dev.moq/moq) | `gradle` (JVM) |
 | C | [`libmoq`](https://github.com/moq-dev/moq/releases) prebuilt release assets | `cc` + the platform tarball |
 
-The **Native JS** client runs the JS packages *outside* a browser, where there's no native WebTransport, using the `@fails-components/webtransport` polyfill (the same one `@moq/clock` uses). It runs as two cells, `js-native-node` and `js-native-bun`, to catch runtime-specific breakage. Subscribe only here too: publishing media needs a WebCodecs encoder, which a native JS runtime lacks (reading raw container frames doesn't).
+The **Native JS** client runs the JS packages *outside* a browser, where there's no native WebTransport, using moq's own `@moq/web-transport` polyfill (a prebuilt NAPI QUIC/HTTP3 addon). It runs as two cells, `js-native-node` and `js-native-bun`, to catch runtime-specific breakage. Subscribe only here too: publishing media needs a WebCodecs encoder, which a native JS runtime lacks (reading raw container frames doesn't).
 
 Swift, Kotlin, and C **subscribe only**. Every non-browser client publishes through the streaming importer (`publish_media_stream`), which isn't in the published 0.2.x FFI yet, so those FFI wrappers can only subscribe until it ships. Rust and the browser publish today.
 
@@ -114,8 +114,8 @@ This test tracks the **latest published** packages, so it sometimes runs ahead o
 - **Rust publish/subscribe** and **browser publish/subscribe** (all three delivery variants: vite, esbuild, jsDelivr): working (`cargo install` / `brew` / `apt` / `nix` + npm/CDN). The green baseline.
 - **Python publish/subscribe**: working. `moq-rs` 0.2.16 shipped the streaming importer (`publish_media_stream`), so Python now publishes a raw Annex-B broadcast too, verified end-to-end against rust/swift/c subscribers.
 - **Swift / Kotlin / C subscribe**: working, verified end-to-end against the published 0.2.16 / 0.3.0 packages (`moq-dev/moq-swift`, `dev.moq:moq`, `libmoq`). Subscriber-only by choice.
-- **Native JS on node** (`js-native-node`): working. `@moq/net` + `@moq/hang` + the `@fails-components/webtransport` polyfill connect via WebTransport and read frames under Node.
-- **Native JS on bun** (`js-native-bun`): red. Bun **crashes** (`panic: Segmentation fault … Bun has crashed`) loading the polyfill's native quiche addon. It's a Bun/N-API bug, not moq code (the identical client works on Node). Kept in the matrix to track when Bun (or the polyfill) fixes it.
+- **Native JS on bun** (`js-native-bun`): working. `@moq/net` + `@moq/hang` + moq's `@moq/web-transport` polyfill connect via WebTransport and read frames under Bun. (An earlier attempt with `@fails-components/webtransport` crashed Bun; moq's own polyfill is the one to use.)
+- **Native JS on node** (`js-native-node`): red. `@moq/web-transport`'s `src/session.ts` does `import { NapiClient } from "../napi.js"` — a *named* import from a napi-rs CJS module whose exports node's ESM loader can't statically see, so node throws `does not provide an export named 'NapiClient'`. Bun's looser CJS interop accepts it. The fix lives in `@moq/web-transport` (default-import the CJS binding, then destructure); this cell goes green once that ships. Tracked upstream in moq-dev/web-transport.
 - **Go (any role)**: red. The published `moq-dev/moq-go` module is still un-buildable (stuck at v0.2.15): it's missing the generated `moq.h` header (its `moq.go` does `#include <moq.h>`) and the linux static libs, so `go get` + build fails. Tracked upstream in moq-dev/moq's release-go packaging.
 
 A broken published package fails only its own matrix cells (see `mark_broken` in `smoke.sh`); it never aborts the rest of the run.

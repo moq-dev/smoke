@@ -141,8 +141,9 @@ jobs:
       - name: Smoke
         run: |
           browser="js-vite,js-esbuild,js-jsdelivr"
-          # js-native-node works; js-native-bun currently crashes Bun (the
-          # WebTransport polyfill's native addon segfaults) -- kept to track the fix.
+          # js-native-bun works with moq's @moq/web-transport polyfill; js-native-node
+          # currently fails (the polyfill's napi CJS named-import breaks node's ESM
+          # loader) -- kept to track the upstream fix.
           native="js-native-node,js-native-bun"
           subs="rust,python,go,kotlin,c,$browser,$native"
           if [ "$RUNNER_OS" = "macOS" ]; then subs="$subs,swift"; fi
