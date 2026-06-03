@@ -20,6 +20,14 @@ jobs:
     # this is just a safety net against a hung relay/client.
     timeout-minutes: 45
 
+    # smoke.sh resolves the latest libmoq release via the GitHub API. Without a
+    # token that call is anonymous (60 req/hr per IP), which the heavily-NAT'd
+    # macOS runners routinely exhaust -> "no libmoq-v* release found" -> the C
+    # subscriber drops out and every "* -> c" case fails. Authenticating lifts
+    # the limit to 1000 req/hr per token.
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+
     strategy:
       fail-fast: false
       matrix:
@@ -88,9 +96,9 @@ jobs:
       - name: Install moq-relay + moq-cli (apt)
         if: matrix.channel == 'apt'
         run: |
-          curl -fsSL https://apt.moq.dev/moq-archive-keyring.gpg \
-            | sudo tee /usr/share/keyrings/moq-archive-keyring.gpg > /dev/null
-          echo "deb [signed-by=/usr/share/keyrings/moq-archive-keyring.gpg] https://apt.moq.dev stable main" \
+          curl -fsSL https://apt.moq.dev/moq-keyring.gpg \
+            | sudo tee /usr/share/keyrings/moq-keyring.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/moq-keyring.gpg] https://apt.moq.dev stable main" \
             | sudo tee /etc/apt/sources.list.d/moq.list
           sudo apt-get update
           sudo apt-get install -y moq-relay moq-cli
