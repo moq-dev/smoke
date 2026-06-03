@@ -22,7 +22,6 @@ SUBSCRIBERS="rust"
 TIMEOUT="${SMOKE_TIMEOUT:-20}"
 FPS="${SMOKE_FPS:-30}"
 SIZE="${SMOKE_SIZE:-320x240}"
-WARMUP="${SMOKE_WARMUP:-2}"
 PORT="${SMOKE_PORT:-4443}"
 URL="http://127.0.0.1:${PORT}"
 NEGATIVE=0
@@ -418,10 +417,6 @@ overall=0
 run_round() {
     local pub="$1" broadcast="$2" pub_pid="$3"
     local pids=() names=() i sub
-    # Let the publisher announce the broadcast + catalog before subscribers
-    # connect. Native subscribers tolerate the race, but the browser watch gives
-    # up on a catalog RESET_STREAM if it connects first.
-    [[ -n "$pub_pid" ]] && sleep "$WARMUP"
     for sub in "${SUB_LIST[@]}"; do
         if is_broken "$sub"; then
             echo "  FAIL  $pub -> $sub (subscriber client unavailable)"
