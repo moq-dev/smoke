@@ -41,7 +41,25 @@ if (role !== "subscribe" || !url || !broadcast) {
 async function run(): Promise<void> {
 	const connection = await Moq.Connection.connect(new URL(url as string));
 	try {
-		const bc = connection.consume(Moq.Path.from(broadcast as string));
+		const path = Moq.Path.from(broadcast as string);
+
+		// Wait for the broadcast to be announced before subscribing. Subscribing to a
+		// track on a broadcast the publisher hasn't announced yet races the relay,
+		// which resets the catalog stream (RESET_STREAM). The Rust API folds this
+		// wait into consume(); the JS API leaves it to the caller. The outer timeout
+		// below bounds how long we wait.
+		const announced = connection.announced(path);
+		try {
+			for (;;) {
+				const entry = await announced.next();
+				if (!entry) throw new Error("connection closed before broadcast was announced");
+				if (entry.active && Moq.Path.hasPrefix(path, entry.path)) break;
+			}
+		} finally {
+			announced.close();
+		}
+
+		const bc = connection.consume(path);
 
 		// The .hang catalog lives on the "catalog.json" track. A lazy publisher may
 		// announce video in a later update, so keep reading frames until one has it.
