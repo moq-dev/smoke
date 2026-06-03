@@ -111,7 +111,7 @@ jobs:
 
       - name: Install Nix (nix channel)
         if: matrix.channel == 'nix'
-        uses: DeterminateSystems/nix-installer-action@1d87d45818068401a10cf16bdc5f00b24994a83f # main
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
         with:
           extra-conf: |
             extra-substituters = https://kixelated.cachix.org
