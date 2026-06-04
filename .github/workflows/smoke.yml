@@ -82,13 +82,17 @@ jobs:
         run: |
           sudo apt-get update
           # gcc (cc) for the C client is already on the runner.
-          sudo apt-get install -y ffmpeg curl procps coreutils jq
+          # gstreamer1.0-* provides gst-launch/gst-inspect + the core elements
+          # (filesink) the moq-gst subscriber loads the prebuilt plugin against.
+          sudo apt-get install -y ffmpeg curl procps coreutils jq \
+            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good
 
       - name: System deps (macOS)
         if: runner.os == 'macOS'
         run: |
           # clang (cc) for the C client and swift for the Swift client ship with Xcode.
-          brew install ffmpeg coreutils jq
+          # gstreamer is the system runtime the prebuilt moq-gst plugin links against.
+          brew install ffmpeg coreutils jq gstreamer
           # GNU coreutils provides `timeout` (macOS ships neither it nor pgrep
           # under those names by default; pgrep exists, timeout does not).
           echo "$(brew --prefix)/opt/coreutils/libexec/gnubin" >> "$GITHUB_PATH"
@@ -151,7 +155,8 @@ jobs:
 
       # ── run the full interop matrix ────────────────────────────────────
       # Publishers: rust, python, and the three browser variants publish today;
-      # go/swift/kotlin/c subscribe only (go's module is also currently broken).
+      # go/swift/kotlin/c/gst subscribe only (go's module is also currently broken,
+      # and no moq-gst release has been cut yet, so gst is red until one ships).
       # Browser variants: js-vite, js-esbuild (bundlers), js-jsdelivr (CDN).
       # Swift needs the Xcode toolchain, so it's a macOS-only subscriber.
       # --timeout 30 gives headless Chromium cold-start headroom.
@@ -162,7 +167,7 @@ jobs:
           # currently fails (the polyfill's napi CJS named-import breaks node's ESM
           # loader) -- kept to track the upstream fix.
           native="js-native-node,js-native-bun"
-          subs="rust,python,go,kotlin,c,$browser,$native"
+          subs="rust,python,go,kotlin,c,gst,$browser,$native"
           if [ "$RUNNER_OS" = "macOS" ]; then subs="$subs,swift"; fi
           ./smoke.sh \
             --publishers "rust,python,$browser" \

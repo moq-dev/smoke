@@ -82,6 +82,13 @@ else
     note FAIL "smoke.sh no longer resolves the latest libmoq-v* release"
     fail=1
 fi
+# GStreamer: smoke.sh resolves the newest moq-gst-v* release, never a fixed version.
+if grep -q "grep '\^moq-gst-v' | head -1" smoke.sh; then
+    note ok "moq-gst -> latest release"
+else
+    note FAIL "smoke.sh no longer resolves the latest moq-gst-v* release"
+    fail=1
+fi
 
 echo "== forced pin (npm playwright) tracks the toolchain =="
 pin=$(json_dep playwright)
