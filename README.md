@@ -135,7 +135,9 @@ export that didn't survive `tsc`) shows up as a red cell.
 
 ```bash
 just token            # default: rust generates + verifies (roundtrip + negatives)
-just token-full       # full matrix: rust, js-node, js-bun all generate + verify
+just token-full       # full matrix: rust, js-node, js-bun + rust-docker (the
+                      # moqdev/moq-token-cli image, where a container runtime is
+                      # available; set TOKEN_DOCKER=podman to use podman)
 # or call it directly with explicit axes:
 ./token.sh --generators rust,js-node --verifiers rust,js-bun --algorithms HS256,EdDSA
 ```
