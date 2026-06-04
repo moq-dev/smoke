@@ -27,7 +27,11 @@ JS_DIR="$SMOKE_DIR/clients/token/js"
 
 GENERATORS="rust"
 VERIFIERS="rust"
-ALGORITHMS="${TOKEN_ALGORITHMS:-HS256,EdDSA}"
+# Cover both code paths in each impl: symmetric (HS256) and every asymmetric
+# family they support — EdDSA (OKP/Ed25519), ES256 (EC), RS256 (RSA) — so the
+# default matrix (and `just token-full` / CI, which don't pass --algorithms)
+# can't silently stop exercising one. Override with --algorithms / TOKEN_ALGORITHMS.
+ALGORITHMS="${TOKEN_ALGORITHMS:-HS256,EdDSA,ES256,RS256}"
 
 # The Rust CLI under test. Whatever channel installed it (cargo/brew/apt/nix)
 # just has to leave it on PATH; override here to point at a specific build.
@@ -208,10 +212,18 @@ verify() {
 "$SMOKE_DIR/freshness.sh" || echo "WARN: freshness check failed (see above); continuing" >&2
 
 if needs rust; then
-    if have "$TOKEN"; then
+    if ! have "$TOKEN"; then
+        mark_broken rust "$TOKEN not found (cargo/brew/apt/nix install moq-token-cli)"
+    # `have` only checks the file exists; actually run it once, since a broken
+    # published binary (e.g. a Homebrew bottle that baked in a /nix/store rpath
+    # and aborts on launch) is exactly the packaging failure this test exists to
+    # catch. A broken CLI marks the whole rust row unavailable instead of crashing
+    # mid-matrix.
+    elif "$TOKEN" generate --algorithm HS256 --out /dev/null >"$TMP/rust-probe.log" 2>&1; then
         echo "rust:    $(command -v "$TOKEN")"
     else
-        mark_broken rust "$TOKEN not found (cargo/brew/apt/nix install moq-token-cli)"
+        mark_broken rust "$TOKEN on PATH but won't run (see below)"
+        sed 's/^/        /' "$TMP/rust-probe.log" >&2 || true
     fi
 fi
 
@@ -304,8 +316,24 @@ if [[ -z "$canon" ]]; then
     echo "  WARN  no working generator; skipping negative pass"
 else
     for algo in "${ALGO_LIST[@]}"; do
-        keydir="$TMP/$canon-$algo"
+        # Mint the canonical key + token here rather than reusing the positive
+        # pass's artifacts: `canon` is only "not marked broken", and its positive
+        # gen/sign for this algo may have failed (missing token.jwt), which would
+        # abort the whole negative pass under `set -e` and hide every later cell.
+        keydir="$TMP/$canon-neg-$algo"
         token="$keydir/token.jwt"
+        if ! gen "$canon" "$algo" "$keydir" >"$keydir.gen.log" 2>&1; then
+            echo "  FAIL  reject(*, $algo): canonical key generation ($canon) failed"
+            sed 's/^/        /' "$keydir.gen.log" >&2 || true
+            overall=1
+            continue
+        fi
+        if ! sign "$canon" "$keydir/sign.jwk" "$algo" >"$token" 2>"$keydir.sign.log"; then
+            echo "  FAIL  reject(*, $algo): canonical signing ($canon) failed"
+            sed 's/^/        /' "$keydir.sign.log" >&2 || true
+            overall=1
+            continue
+        fi
         # Tampered token: flip the FIRST character of the signature segment.
         # The first base64url char of a segment carries 6 significant bits, so
         # flipping it always changes the decoded signature bytes; appending or
