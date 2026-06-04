@@ -89,6 +89,7 @@ GO_SMOKE=""     # compiled Go client binary (set in prepare)
 SWIFT_SMOKE=""  # compiled Swift client binary (set in prepare)
 KOTLIN_SMOKE="" # Kotlin run script from `gradle installDist` (set in prepare)
 C_SMOKE=""      # compiled C client binary (set in prepare)
+GST_PLUGIN_DIR="" # dir holding the moq-gst plugin (libgstmoq.{so,dylib}; set in prepare)
 BROKEN_LANGS="" # clients whose public package failed to install/build
 
 mark_broken() {
@@ -188,6 +189,63 @@ c_prepare() {
     root="$TMP/libmoq/moq-$ver-$target"
     # shellcheck disable=SC2086  # os_libs is a deliberate multi-flag word list
     "$cc" "$CLIENTS/c/subscribe.c" -I"$root/include" -L"$root/lib" -lmoq $os_libs -o "$C_SMOKE"
+}
+
+# Download the latest moq-gst prebuilt release for this platform and confirm the
+# plugin loads against the host's *system* GStreamer. The plugin (libgstmoq.so /
+# .dylib) dynamic-links libgstreamer, so this is the customer-facing scenario:
+# install the .deb / brew tap / tarball, then `gst-inspect-1.0 moq`. Sets
+# GST_PLUGIN_DIR to the dir holding the plugin. moqsrc connects over the network,
+# so it's relay-channel-agnostic; GST_PLUGIN_DIR + a system GStreamer is all it
+# needs. (Local nix shells have no GStreamer, and a prebuilt plugin wouldn't link
+# against nixpkgs' gst anyway, so this cell wants a real system gst install.)
+gst_prepare() {
+    local target tag ver url root hdr=()
+    have gst-launch-1.0 || { echo "gst-launch-1.0 not on PATH (apt install gstreamer1.0-tools / brew install gstreamer)" >&2; return 1; }
+    have gst-inspect-1.0 || { echo "gst-inspect-1.0 not on PATH" >&2; return 1; }
+    # Escape hatch: point at a locally-built plugin dir (e.g. target/release after
+    # `cargo build -p moq-gst`) instead of the published tarball, mirroring the
+    # RELAY_BIN/MOQ_BIN overrides. Skips the download but still load-checks it.
+    if [[ -n "${MOQ_GST_PLUGIN_DIR:-}" ]]; then
+        GST_PLUGIN_DIR="$MOQ_GST_PLUGIN_DIR"
+        echo "moq-gst (local: $GST_PLUGIN_DIR)"
+        [[ -d "$GST_PLUGIN_DIR" ]] || { echo "MOQ_GST_PLUGIN_DIR is not a directory: $GST_PLUGIN_DIR" >&2; return 1; }
+        GST_PLUGIN_PATH_1_0="$GST_PLUGIN_DIR" GST_PLUGIN_SYSTEM_PATH_1_0="" \
+            GST_REGISTRY_1_0="$TMP/gst-registry.bin" \
+            gst-inspect-1.0 moq 2>/dev/null | grep -qE '^[[:space:]]+moqsrc:' ||
+            { echo "moqsrc not exposed (plugin failed to load against this GStreamer)" >&2; return 1; }
+        return 0
+    fi
+    have curl || { echo "curl required" >&2; return 1; }
+    have jq || { echo "jq required" >&2; return 1; }
+    case "$(uname -s)/$(uname -m)" in
+        Darwin/arm64) target=aarch64-apple-darwin ;;
+        Darwin/x86_64) target=x86_64-apple-darwin ;;
+        Linux/x86_64) target=x86_64-unknown-linux-gnu ;;
+        Linux/aarch64 | Linux/arm64) target=aarch64-unknown-linux-gnu ;;
+        *) echo "unsupported platform: $(uname -s)/$(uname -m)" >&2; return 1 ;;
+    esac
+    # Latest moq-gst-v* release, never pinned. Authenticated if a token is around
+    # (CI) to dodge the 60/hr anonymous GitHub API limit.
+    [[ -n "${GITHUB_TOKEN:-}" ]] && hdr=(-H "Authorization: Bearer $GITHUB_TOKEN")
+    tag=$(curl -sf ${hdr[@]+"${hdr[@]}"} "https://api.github.com/repos/moq-dev/moq/releases?per_page=100" |
+        jq -r '.[].tag_name' | grep '^moq-gst-v' | head -1)
+    [[ -n "$tag" ]] || { echo "no moq-gst-v* release found" >&2; return 1; }
+    ver=${tag#moq-gst-v}
+    url="https://github.com/moq-dev/moq/releases/download/$tag/moq-gst-$ver-$target.tar.gz"
+    echo "moq-gst $tag ($target)"
+    mkdir -p "$TMP/moq-gst"
+    curl -sfL "$url" | tar xz -C "$TMP/moq-gst" || { echo "download/extract failed: $url" >&2; return 1; }
+    root="$TMP/moq-gst/moq-gst-$ver-$target"
+    GST_PLUGIN_DIR="$root/lib/gstreamer-1.0"
+    [[ -d "$GST_PLUGIN_DIR" ]] || { echo "plugin dir missing in tarball: $GST_PLUGIN_DIR" >&2; return 1; }
+    # gst-inspect exits 0 even when the .so fails to load, so grep for the
+    # factory. Isolate discovery to our dir + a temp registry so a system-wide moq
+    # plugin can't shadow it (mirrors moq-gst's own smoke.sh).
+    GST_PLUGIN_PATH_1_0="$GST_PLUGIN_DIR" GST_PLUGIN_SYSTEM_PATH_1_0="" \
+        GST_REGISTRY_1_0="$TMP/gst-registry.bin" \
+        gst-inspect-1.0 moq 2>/dev/null | grep -qE '^[[:space:]]+moqsrc:' ||
+        { echo "moqsrc not exposed (plugin failed to load against this GStreamer)" >&2; return 1; }
 }
 
 # ── setup ───────────────────────────────────────────────────────────────────
@@ -305,6 +363,14 @@ if needs c; then
     fi
 fi
 
+if needs gst; then
+    echo "installing gstreamer client (moq-gst prebuilt release)..."
+    if gst_prepare >"$TMP/gst-build.log" 2>&1; then :; else
+        mark_broken gst "moq-gst download / plugin load failed"
+        sed 's/^/        /' "$TMP/gst-build.log" >&2 || true
+    fi
+fi
+
 if curl -sf "$URL/certificate.sha256" >/dev/null 2>&1; then
     echo "error: something is already listening on 127.0.0.1:4443 (stale relay?)" >&2
     exit 1
@@ -398,6 +464,23 @@ run_subscriber() {
             ;;
         c)
             "$C_SMOKE" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
+            ;;
+        gst)
+            # moqsrc exposes the broadcast's video as a Sometimes pad (video_%u,
+            # ANY caps); gst-launch links it to filesink once it appears. We pipe
+            # the raw frames to stdout and grab one byte, the same "bytes moved"
+            # bar (and the same head -c 1 early-exit idiom) as the rust subscriber
+            # -- no decode. head closing the pipe SIGPIPEs gst-launch, so success
+            # returns at once; no data just runs out the timeout. Our plugin dir
+            # rides on top of the system path (which provides filesink); a private
+            # registry keeps the scan off the user's cache. buffer-mode=2 makes
+            # filesink unbuffered so the first frame reaches head immediately.
+            local n
+            n=$(GST_PLUGIN_PATH_1_0="$GST_PLUGIN_DIR" GST_REGISTRY_1_0="$TMP/gst-run-registry.bin" \
+                timeout -k 3 "$TIMEOUT" gst-launch-1.0 -q \
+                moqsrc url="$URL" broadcast="$broadcast" ! filesink location=/dev/stdout buffer-mode=2 \
+                2>/dev/null | head -c 1 | wc -c | tr -d ' ' || true)
+            [[ "${n:-0}" -ge 1 ]]
             ;;
         js-vite | js-esbuild | js-jsdelivr)
             # Headless Chromium decodes via WebCodecs; exits 0 once a frame lands.
