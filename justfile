@@ -20,6 +20,18 @@ smoke *args:
 full:
     ./smoke.sh --publishers rust,python,js-vite,js-esbuild,js-jsdelivr --subscribers rust,python,go,swift,kotlin,c,js-vite,js-esbuild,js-jsdelivr,js-native-node,js-native-bun --timeout 30
 
+# Token interop: install moq-token in each published flavour and cross-verify.
+# The Rust moq-token-cli comes from a channel (PATH); @moq/token comes from npm,
+# driven under both node and bun. Default: rust only. Pass flags through, e.g.
+#   just token --generators rust,js-node --verifiers rust,js-bun --algorithms HS256
+token *args:
+    ./token.sh {{ args }}
+
+# Full token matrix: every implementation mints and verifies every other's
+# tokens, across HS256 (symmetric) + EdDSA (asymmetric).
+token-full:
+    ./token.sh --generators rust,js-node,js-bun --verifiers rust,js-node,js-bun
+
 # The "nix" channel: get moq-relay + moq-cli from the moq flake itself
 # (a public distribution channel, `nix run github:moq-dev/moq#moq-cli`), instead
 # of cargo/brew/apt. Referenced ad-hoc with --refresh so the moq version is the
@@ -56,7 +68,7 @@ freshness:
 
 # Lint the harness. Each tool is guarded so it skips when not on PATH.
 check:
-    command -v shellcheck >/dev/null && shellcheck smoke.sh freshness.sh || echo "shellcheck: skipped"
-    command -v shfmt >/dev/null && shfmt -d -i 4 -ci smoke.sh freshness.sh || echo "shfmt: skipped"
+    command -v shellcheck >/dev/null && shellcheck smoke.sh freshness.sh token.sh || echo "shellcheck: skipped"
+    command -v shfmt >/dev/null && shfmt -d -i 4 -ci smoke.sh freshness.sh token.sh || echo "shfmt: skipped"
     command -v actionlint >/dev/null && actionlint || echo "actionlint: skipped"
     just freshness

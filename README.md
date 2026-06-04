@@ -79,8 +79,9 @@ RELAY_BIN=/path/to/moq-relay MOQ_BIN=/path/to/moq-cli ./smoke.sh
 ## Layout
 
 ```
-smoke.sh                 orchestrator: relay + matrix
+smoke.sh                 orchestrator: relay + media interop matrix
 smoke.toml               relay config (anonymous, self-signed localhost)
+token.sh                 orchestrator: moq-token generate/verify interop matrix
 clients/
   python/smoke.py        publish/subscribe via moq-rs (PyPI)
   go/                     publish/subscribe via moq-dev/moq-go (go get)
@@ -90,8 +91,46 @@ clients/
   kotlin/                 subscribe via dev.moq:moq (Gradle/JVM)
   c/subscribe.c          subscribe via libmoq (prebuilt release)
   js-native/subscribe.ts subscribe via @moq/net + @moq/hang + WebTransport polyfill (node, bun)
+  token/js/              installs @moq/token (npm) for token.sh to drive under node + bun
 freshness.sh             enforces the "always latest, no package locks" policy
 .github/workflows/smoke.yml   nightly + on-demand CI matrix (os x channel)
+```
+
+## Token interop
+
+`token.sh` is a second, independent smoke test for moq's authentication tooling.
+`moq-relay` is keyed with a JWK and verifies the JWTs that publishers and
+subscribers present, so a token minted by one implementation has to verify under
+the implementation a relay was keyed with. The token tooling ships in several
+published flavours, and this test proves they cross-verify:
+
+| Cell | Source under test | Install |
+|---|---|---|
+| `rust` | the `moq-token-cli` binary (crates.io / Homebrew tap / apt repo / the moq flake) | `cargo install moq-token-cli`, `brew install moq-dev/tap/moq-token-cli`, `apt install`, `nix run github:moq-dev/moq#moq-token-cli` |
+| `js-node` | npm [`@moq/token`](https://www.npmjs.com/package/@moq/token)'s `moq-token` CLI, run under **node** | `npm i @moq/token` |
+| `js-bun` | the same published npm package, run under **bun** | `npm i @moq/token` |
+
+Like `smoke.sh`, the Rust binary is taken from `PATH` (or `TOKEN_BIN`), so the
+install channel is whatever put `moq-token-cli` there; `@moq/token` is installed
+from npm on each run. For every *(generator × verifier × algorithm)* cell, the
+generator mints a key and signs a token, and the verifier checks it — covering
+both symmetric (`HS256`, shared secret) and asymmetric (`EdDSA`/`ES256`/`RS256`,
+sign-private/verify-public) keys, and the fact that one side's key encoding
+(the Rust CLI writes base64url-JSON; `@moq/token` writes plain JSON) loads on the
+other. A negative pass then confirms each verifier **rejects** a tampered token
+and a token signed by the wrong key, so a green cell means "accepts the valid
+one and refuses the bad ones", not "accepts everything".
+
+This complements moq's in-tree token unit tests: those run against workspace
+source with hardcoded fixtures; this runs the real published CLIs, live on both
+sides, so a packaging break (a missing bin in the `.deb`, a stale formula, an
+export that didn't survive `tsc`) shows up as a red cell.
+
+```bash
+just token            # default: rust generates + verifies (roundtrip + negatives)
+just token-full       # full matrix: rust, js-node, js-bun all generate + verify
+# or call it directly with explicit axes:
+./token.sh --generators rust,js-node --verifiers rust,js-bun --algorithms HS256,EdDSA
 ```
 
 ## Always the latest moq packages (no package lock files)
@@ -117,5 +156,6 @@ This test tracks the **latest published** packages, so it sometimes runs ahead o
 - **Native JS on bun** (`js-native-bun`): working. `@moq/net` + `@moq/hang` + moq's `@moq/web-transport` polyfill connect via WebTransport and read frames under Bun. (An earlier attempt with `@fails-components/webtransport` crashed Bun; moq's own polyfill is the one to use.)
 - **Native JS on node** (`js-native-node`): red. `@moq/web-transport`'s `src/session.ts` does `import { NapiClient } from "../napi.js"` — a *named* import from a napi-rs CJS module whose exports node's ESM loader can't statically see, so node throws `does not provide an export named 'NapiClient'`. Bun's looser CJS interop accepts it. The fix lives in `@moq/web-transport` (default-import the CJS binding, then destructure); this cell goes green once that ships. Tracked upstream in moq-dev/web-transport.
 - **Go (any role)**: red. The published `moq-dev/moq-go` module is still un-buildable (stuck at v0.2.15): it's missing the generated `moq.h` header (its `moq.go` does `#include <moq.h>`) and the linux static libs, so `go get` + build fails. Tracked upstream in moq-dev/moq's release-go packaging.
+- **Token interop** (`token.sh`): working. The published `moq-token-cli` (crates.io) and `@moq/token` (npm, under both node and bun) cross-verify every token in all nine generator×verifier pairings across `HS256`, `EdDSA`, `ES256`, and `RS256`, and each verifier rejects tampered tokens and the wrong key. Subscriber-only languages don't ship token tooling yet, so the matrix is rust + the two JS runtimes for now.
 
-A broken published package fails only its own matrix cells (see `mark_broken` in `smoke.sh`); it never aborts the rest of the run.
+A broken published package fails only its own matrix cells (see `mark_broken` in `smoke.sh` / `token.sh`); it never aborts the rest of the run.

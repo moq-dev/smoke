@@ -39,6 +39,9 @@ for dep in @moq/net @moq/hang @moq/web-transport; do
     ver=$(grep -oE "\"$dep\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" clients/js-native/package.json | sed -E 's/.*"([^"]*)"$/\1/')
     if [[ "$ver" == "latest" ]]; then note ok "$dep -> \"$ver\""; else note FAIL "$dep pinned to \"$ver\" (want \"latest\")"; fail=1; fi
 done
+# The token client (@moq/token, driven by token.sh under node and bun) must be latest.
+ver=$(grep -oE "\"@moq/token\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" clients/token/js/package.json | sed -E 's/.*"([^"]*)"$/\1/')
+if [[ "$ver" == "latest" ]]; then note ok "@moq/token -> \"$ver\""; else note FAIL "@moq/token pinned to \"$ver\" (want \"latest\")"; fail=1; fi
 # The jsDelivr CDN variant must not pin @version, so it serves the latest release.
 if grep -qE 'cdn\.jsdelivr\.net/npm/@moq/[a-z-]+@[0-9]' clients/js/jsdelivr/index.html; then
     note FAIL "jsdelivr/index.html pins a @moq version (drop @x.y.z so the CDN serves latest)"

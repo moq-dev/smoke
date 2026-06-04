@@ -89,11 +89,11 @@ jobs:
           echo "$(brew --prefix)/opt/coreutils/libexec/gnubin" >> "$GITHUB_PATH"
 
       # ── Rust binaries, per channel (left on PATH for smoke.sh) ──────────
-      - name: Install moq-relay + moq-cli (cargo)
+      - name: Install moq-relay + moq-cli + moq-token-cli (cargo)
         if: matrix.channel == 'cargo'
-        run: cargo install moq-relay moq-cli
+        run: cargo install moq-relay moq-cli moq-token-cli
 
-      - name: Install moq-relay + moq-cli (apt)
+      - name: Install moq-relay + moq-cli + moq-token-cli (apt)
         if: matrix.channel == 'apt'
         run: |
           curl -fsSL https://apt.moq.dev/moq-keyring.gpg \
@@ -101,13 +101,13 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/moq-keyring.gpg] https://apt.moq.dev stable main" \
             | sudo tee /etc/apt/sources.list.d/moq.list
           sudo apt-get update
-          sudo apt-get install -y moq-relay moq-cli
+          sudo apt-get install -y moq-relay moq-cli moq-token-cli
 
-      - name: Install moq-relay + moq-cli (brew)
+      - name: Install moq-relay + moq-cli + moq-token-cli (brew)
         if: matrix.channel == 'brew'
         run: |
           brew tap moq-dev/tap
-          brew install moq-dev/tap/moq-relay moq-dev/tap/moq-cli
+          brew install moq-dev/tap/moq-relay moq-dev/tap/moq-cli moq-dev/tap/moq-token-cli
 
       - name: Install Nix (nix channel)
         if: matrix.channel == 'nix'
@@ -124,8 +124,12 @@ jobs:
         run: |
           relay=$(nix build --refresh --no-link --print-out-paths 'github:moq-dev/moq#moq-relay')
           cli=$(nix build --refresh --no-link --print-out-paths 'github:moq-dev/moq#moq-cli')
-          echo "RELAY_BIN=$relay/bin/moq-relay" >> "$GITHUB_ENV"
-          echo "MOQ_BIN=$cli/bin/moq-cli" >> "$GITHUB_ENV"
+          token=$(nix build --refresh --no-link --print-out-paths 'github:moq-dev/moq#moq-token-cli')
+          {
+            echo "RELAY_BIN=$relay/bin/moq-relay"
+            echo "MOQ_BIN=$cli/bin/moq-cli"
+            echo "TOKEN_BIN=$token/bin/moq-token-cli"
+          } >> "$GITHUB_ENV"
 
       # ── browser deps (Chromium runtime libs on Linux) ──────────────────
       - name: Playwright system deps (Linux)
@@ -163,3 +167,12 @@ jobs:
       # Quick proof the harness can actually report failure.
       - name: Negative control
         run: ./smoke.sh --negative --subscribers rust,python
+
+      # ── token interop ──────────────────────────────────────────────────
+      # Independent of the media matrix: prove the published token tooling
+      # cross-verifies. moq-token-cli rides the same channel as moq-relay/moq-cli
+      # (cargo/apt/brew/nix, on PATH or TOKEN_BIN); @moq/token comes from npm and
+      # runs under both node and bun. The negative pass inside token.sh confirms
+      # each verifier rejects tampered tokens and the wrong key.
+      - name: Token interop
+        run: ./token.sh --generators rust,js-node,js-bun --verifiers rust,js-node,js-bun
