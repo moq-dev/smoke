@@ -29,7 +29,11 @@ NEGATIVE=0
 # Binaries under test. Whatever channel installed them (cargo/brew/apt) just has
 # to leave them on PATH; override here to point at a specific build.
 RELAY="${RELAY_BIN:-moq-relay}"
-MOQ="${MOQ_BIN:-moq-cli}"
+# The CLI's real binary name is `moq` (what the apt/rpm packages install). `cargo
+# install moq-cli` instead names it after the crate, `moq-cli`. Honor MOQ_BIN if
+# set, otherwise pick whichever name the channel left on PATH (resolved once the
+# `have` helper is defined, in require_tools).
+MOQ="${MOQ_BIN:-}"
 
 require_value() {
     # require_value <flag> "$@": the flag plus the rest of the argv. Ensures a
@@ -121,6 +125,12 @@ trap cleanup EXIT
 have() { command -v "$1" >/dev/null 2>&1; }
 
 require_tools() {
+    # Resolve the CLI binary name unless MOQ_BIN pinned it: the apt/rpm packages
+    # install `moq`, while `cargo install moq-cli` names it `moq-cli`. Prefer the
+    # packaged name, fall back to the cargo one.
+    if [[ -z "$MOQ" ]]; then
+        if have moq; then MOQ=moq; elif have moq-cli; then MOQ=moq-cli; else MOQ=moq; fi
+    fi
     # Only the relay, CLI, and harness essentials are hard requirements. A missing
     # per-client toolchain (uv / go / bun / swift / gradle / cc) just marks that
     # client broken in prepare, so it fails its own cells instead of the whole run.
@@ -129,7 +139,7 @@ require_tools() {
         have "$t" || missing+=("$t")
     done
     have "$RELAY" || missing+=("$RELAY (cargo/brew/apt/nix install moq-relay)")
-    have "$MOQ" || missing+=("$MOQ (cargo/brew/apt/nix install moq-cli)")
+    have "$MOQ" || missing+=("moq / moq-cli (cargo/brew/apt/nix install moq-cli)")
     if [[ ${#missing[@]} -gt 0 ]]; then
         echo "error: missing required tools: ${missing[*]}" >&2
         exit 1
