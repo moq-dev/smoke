@@ -177,7 +177,13 @@ jobs:
       # Independent of the media matrix: prove the published token tooling
       # cross-verifies. moq-token-cli rides the same channel as moq-relay/moq-cli
       # (cargo/apt/brew/nix, on PATH or TOKEN_BIN); @moq/token comes from npm and
-      # runs under both node and bun. The negative pass inside token.sh confirms
-      # each verifier rejects tampered tokens and the wrong key.
+      # runs under both node and bun; rust-docker pulls the moqdev/moq-token-cli
+      # image. The negative pass inside token.sh confirms each verifier rejects
+      # tampered tokens and the wrong key.
       - name: Token interop
-        run: ./token.sh --generators rust,js-node,js-bun --verifiers rust,js-node,js-bun
+        run: |
+          impls="rust,js-node,js-bun"
+          # The Docker cell needs a daemon; GitHub's macOS runners have none, so
+          # it's Linux-only. (Docker is preinstalled on the Linux runners.)
+          if [ "$RUNNER_OS" = "Linux" ]; then impls="$impls,rust-docker"; fi
+          ./token.sh --generators "$impls" --verifiers "$impls"

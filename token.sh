@@ -37,6 +37,13 @@ ALGORITHMS="${TOKEN_ALGORITHMS:-HS256,EdDSA,ES256,RS256}"
 # just has to leave it on PATH; override here to point at a specific build.
 TOKEN="${TOKEN_BIN:-moq-token-cli}"
 
+# The published Docker image for the `rust-docker` cell. Untagged = :latest, the
+# tag the release pipeline moves to the newest version; pulled fresh each run.
+DOCKER_TOKEN_IMAGE="${DOCKER_TOKEN_IMAGE:-moqdev/moq-token-cli}"
+# Container runtime for that cell. `docker` by default (what GitHub's Linux
+# runners ship); set TOKEN_DOCKER=podman to use a drop-in-compatible one.
+DOCKER="${TOKEN_DOCKER:-docker}"
+
 # Canary claims. Distinctive values so a verifier's claim dump can be grepped for
 # them regardless of output format (Rust prints a debug struct, JS prints JSON;
 # both contain these literal strings if the claims survived the round trip).
@@ -125,8 +132,15 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # either; @moq/token writes plain JSON and reads either.
 
 cli_for() {
-    # Resolve the runtime + CLI path for a JS implementation.
+    # The command prefix that runs each implementation's moq-token CLI. The word
+    # split is deliberate (runtime + path, or a whole `docker run ...` line), so
+    # callers expand it unquoted.
     case "$1" in
+        rust) echo "$TOKEN" ;;
+        # Mount TMP at its real path so the in-container CLI reads/writes the same
+        # key/token files token.sh hands it. The image bundles the nix store, so
+        # the binary's libiconv deps resolve (the brew bottle's bug doesn't apply).
+        rust-docker) echo "$DOCKER run --rm -v $TMP:$TMP -w $TMP $DOCKER_TOKEN_IMAGE" ;;
         js-node) echo "node $CLI_NODE" ;;
         js-bun) echo "bun $CLI_BUN" ;;
         *) return 1 ;;
@@ -136,20 +150,25 @@ cli_for() {
 gen() {
     local impl="$1" algo="$2" dir="$3"
     mkdir -p "$dir"
+    local cli
+    cli=$(cli_for "$impl") || {
+        echo "unknown generator: $impl" >&2
+        return 1
+    }
     case "$impl" in
-        rust)
+        rust | rust-docker)
             if [[ "$algo" == HS* ]]; then
-                "$TOKEN" generate --algorithm "$algo" --out "$dir/sign.jwk"
+                # shellcheck disable=SC2086  # cli is a deliberate multi-word prefix
+                $cli generate --algorithm "$algo" --out "$dir/sign.jwk"
                 cp "$dir/sign.jwk" "$dir/verify.jwk"
             else
-                "$TOKEN" generate --algorithm "$algo" --out "$dir/sign.jwk" --public "$dir/verify.jwk"
+                # shellcheck disable=SC2086
+                $cli generate --algorithm "$algo" --out "$dir/sign.jwk" --public "$dir/verify.jwk"
             fi
             ;;
         js-node | js-bun)
-            local cli
-            cli=$(cli_for "$impl")
             if [[ "$algo" == HS* ]]; then
-                # shellcheck disable=SC2086  # cli is "runtime path", a deliberate split
+                # shellcheck disable=SC2086
                 $cli generate --key "$dir/sign.jwk" --algorithm "$algo" >/dev/null
                 cp "$dir/sign.jwk" "$dir/verify.jwk"
             else
@@ -157,53 +176,39 @@ gen() {
                 $cli generate --key "$dir/sign.jwk" --algorithm "$algo" --public "$dir/verify.jwk" >/dev/null
             fi
             ;;
-        *)
-            echo "unknown generator: $impl" >&2
-            return 1
-            ;;
     esac
 }
 
 sign() {
-    local impl="$1" signkey="$2" algo="$3"
-    case "$impl" in
-        rust)
-            "$TOKEN" sign --key "$signkey" --root "$ROOT" \
-                --publish "pub-canary-$algo" --subscribe "sub-canary-$algo"
-            ;;
-        js-node | js-bun)
-            local cli
-            cli=$(cli_for "$impl")
-            # shellcheck disable=SC2086
-            $cli sign --key "$signkey" --root "$ROOT" \
-                --publish "pub-canary-$algo" --subscribe "sub-canary-$algo"
-            ;;
-        *)
-            echo "unknown signer: $impl" >&2
-            return 1
-            ;;
-    esac
+    local impl="$1" signkey="$2" algo="$3" cli
+    cli=$(cli_for "$impl") || {
+        echo "unknown signer: $impl" >&2
+        return 1
+    }
+    # Same flags for the PATH binary and the Docker image; JS uses the same ones too.
+    # shellcheck disable=SC2086
+    $cli sign --key "$signkey" --root "$ROOT" \
+        --publish "pub-canary-$algo" --subscribe "sub-canary-$algo"
 }
 
 verify() {
-    local impl="$1" verifykey="$2" tokenfile="$3"
+    local impl="$1" verifykey="$2" tokenfile="$3" cli
+    cli=$(cli_for "$impl") || {
+        echo "unknown verifier: $impl" >&2
+        return 1
+    }
     case "$impl" in
-        rust)
+        rust | rust-docker)
             # Rust verify reads the token from --in and ignores root (it just
             # decodes); it prints a debug dump of the claims on success.
-            "$TOKEN" verify --key "$verifykey" --in "$tokenfile"
+            # shellcheck disable=SC2086
+            $cli verify --key "$verifykey" --in "$tokenfile"
             ;;
         js-node | js-bun)
             # JS verify reads the token from stdin and enforces --root, so pass
             # the same root the token was signed with; it prints claims as JSON.
-            local cli
-            cli=$(cli_for "$impl")
             # shellcheck disable=SC2086
             $cli verify --key "$verifykey" --root "$ROOT" <"$tokenfile"
-            ;;
-        *)
-            echo "unknown verifier: $impl" >&2
-            return 1
             ;;
     esac
 }
@@ -224,6 +229,22 @@ if needs rust; then
     else
         mark_broken rust "$TOKEN on PATH but won't run (see below)"
         sed 's/^/        /' "$TMP/rust-probe.log" >&2 || true
+    fi
+fi
+
+if needs rust-docker; then
+    if ! have "$DOCKER"; then
+        mark_broken rust-docker "$DOCKER not found"
+    elif ! "$DOCKER" info >"$TMP/docker-info.log" 2>&1; then
+        mark_broken rust-docker "$DOCKER daemon not running"
+    # Pull :latest fresh (the published-package equivalent of the other channels'
+    # always-latest install), then run it once to confirm the image works.
+    elif "$DOCKER" pull "$DOCKER_TOKEN_IMAGE" >"$TMP/docker-pull.log" 2>&1 &&
+        "$DOCKER" run --rm "$DOCKER_TOKEN_IMAGE" generate --algorithm HS256 --out /dev/null >"$TMP/docker-probe.log" 2>&1; then
+        echo "rust-docker: $DOCKER_TOKEN_IMAGE (latest, via $DOCKER)"
+    else
+        mark_broken rust-docker "$DOCKER pull/run $DOCKER_TOKEN_IMAGE failed (see below)"
+        cat "$TMP/docker-pull.log" "$TMP/docker-probe.log" 2>/dev/null | sed 's/^/        /' >&2 || true
     fi
 fi
 

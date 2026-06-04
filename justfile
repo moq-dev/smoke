@@ -28,9 +28,10 @@ token *args:
     ./token.sh {{ args }}
 
 # Full token matrix: every implementation mints and verifies every other's
-# tokens, across HS256 (symmetric) + EdDSA (asymmetric).
+# tokens. rust-docker pulls the published moqdev/moq-token-cli image (needs a
+# container runtime; set TOKEN_DOCKER=podman to use podman instead of docker).
 token-full:
-    ./token.sh --generators rust,js-node,js-bun --verifiers rust,js-node,js-bun
+    ./token.sh --generators rust,js-node,js-bun,rust-docker --verifiers rust,js-node,js-bun,rust-docker
 
 # The "nix" channel: get moq-relay + moq-cli from the moq flake itself
 # (a public distribution channel, `nix run github:moq-dev/moq#moq-cli`), instead

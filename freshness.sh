@@ -42,6 +42,13 @@ done
 # The token client (@moq/token, driven by token.sh under node and bun) must be latest.
 ver=$(grep -oE "\"@moq/token\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" clients/token/js/package.json | sed -E 's/.*"([^"]*)"$/\1/')
 if [[ "$ver" == "latest" ]]; then note ok "@moq/token -> \"$ver\""; else note FAIL "@moq/token pinned to \"$ver\" (want \"latest\")"; fail=1; fi
+# The token Docker image must be the unpinned (:latest) tag, pulled fresh each run.
+if grep -qF 'DOCKER_TOKEN_IMAGE:-moqdev/moq-token-cli}' token.sh && grep -qF '"$DOCKER" pull "$DOCKER_TOKEN_IMAGE"' token.sh; then
+    note ok "moqdev/moq-token-cli -> :latest (pulled each run)"
+else
+    note FAIL "token.sh no longer pulls an unpinned moqdev/moq-token-cli :latest"
+    fail=1
+fi
 # The jsDelivr CDN variant must not pin @version, so it serves the latest release.
 if grep -qE 'cdn\.jsdelivr\.net/npm/@moq/[a-z-]+@[0-9]' clients/js/jsdelivr/index.html; then
     note FAIL "jsdelivr/index.html pins a @moq version (drop @x.y.z so the CDN serves latest)"

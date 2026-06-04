@@ -109,10 +109,17 @@ published flavours, and this test proves they cross-verify:
 | `rust` | the `moq-token-cli` binary (crates.io / Homebrew tap / apt repo / the moq flake) | `cargo install moq-token-cli`, `brew install moq-dev/tap/moq-token-cli`, `apt install`, `nix run github:moq-dev/moq#moq-token-cli` |
 | `js-node` | npm [`@moq/token`](https://www.npmjs.com/package/@moq/token)'s `moq-token` CLI, run under **node** | `npm i @moq/token` |
 | `js-bun` | the same published npm package, run under **bun** | `npm i @moq/token` |
+| `rust-docker` | the [`moqdev/moq-token-cli`](https://hub.docker.com/r/moqdev/moq-token-cli) Docker Hub image (`:latest`) | `docker run moqdev/moq-token-cli …` |
 
 Like `smoke.sh`, the Rust binary is taken from `PATH` (or `TOKEN_BIN`), so the
 install channel is whatever put `moq-token-cli` there; `@moq/token` is installed
-from npm on each run. For every *(generator × verifier × algorithm)* cell, the
+from npm on each run; `rust-docker` `docker pull`s the `moqdev/moq-token-cli`
+image fresh (`:latest`) and runs the CLI in a throwaway container with the scratch
+dir bind-mounted. The image is built `FROM nixos/nix` and ships the nix store, so
+it's a genuinely different artifact from the `cargo`/`brew`/`apt` binaries — and
+in CI it runs only on the Linux runners (GitHub's macOS runners have no Docker
+daemon); set `TOKEN_DOCKER=podman` to drive it with podman. For every
+*(generator × verifier × algorithm)* cell, the
 generator mints a key and signs a token, and the verifier checks it — covering
 both symmetric (`HS256`, shared secret) and asymmetric (`EdDSA`/`ES256`/`RS256`,
 sign-private/verify-public) keys, and the fact that one side's key encoding
@@ -156,7 +163,7 @@ This test tracks the **latest published** packages, so it sometimes runs ahead o
 - **Native JS on bun** (`js-native-bun`): working. `@moq/net` + `@moq/hang` + moq's `@moq/web-transport` polyfill connect via WebTransport and read frames under Bun. (An earlier attempt with `@fails-components/webtransport` crashed Bun; moq's own polyfill is the one to use.)
 - **Native JS on node** (`js-native-node`): red. `@moq/web-transport`'s `src/session.ts` does `import { NapiClient } from "../napi.js"` — a *named* import from a napi-rs CJS module whose exports node's ESM loader can't statically see, so node throws `does not provide an export named 'NapiClient'`. Bun's looser CJS interop accepts it. The fix lives in `@moq/web-transport` (default-import the CJS binding, then destructure); this cell goes green once that ships. Tracked upstream in moq-dev/web-transport.
 - **Go (any role)**: red. The published `moq-dev/moq-go` module is still un-buildable (stuck at v0.2.15): it's missing the generated `moq.h` header (its `moq.go` does `#include <moq.h>`) and the linux static libs, so `go get` + build fails. Tracked upstream in moq-dev/moq's release-go packaging.
-- **Token interop** (`token.sh`): working on **cargo / apt / nix**. The published `moq-token-cli` (crates.io / apt / nix) and `@moq/token` (npm, under both node and bun) cross-verify every token in all nine generator×verifier pairings across `HS256`, `EdDSA`, `ES256`, and `RS256`, and each verifier rejects tampered tokens and the wrong key. Subscriber-only languages don't ship token tooling yet, so the matrix is rust + the two JS runtimes for now.
+- **Token interop** (`token.sh`): working on **cargo / apt / nix** plus the **`moqdev/moq-token-cli` Docker image** (Linux). The published `moq-token-cli` (crates.io / apt / nix / Docker Hub) and `@moq/token` (npm, under both node and bun) cross-verify every token across `HS256`, `EdDSA`, `ES256`, and `RS256`, and each verifier rejects tampered tokens and the wrong key. The Docker cell (`rust-docker`) proves the image — built `FROM nixos/nix`, so it carries the libiconv the brew bottle leaks — runs cleanly. Subscriber-only languages don't ship token tooling yet, so the matrix is rust (binary + Docker) + the two JS runtimes for now.
 - **Token interop on the Homebrew bottle** (`rust` cells, macOS `brew`): red. The published `moq-dev/tap/moq-token-cli` bottle aborts on launch — it baked in a `/nix/store/…-libiconv/lib/libiconv.2.dylib` rpath from the build sandbox that doesn't exist on a user's Mac (`dyld: Library not loaded`). `token.sh` runs the binary once at startup and marks `rust` unavailable when it won't launch, so the JS cells still report; the row goes green once the bottle is rebuilt without the leaked path. Exactly the packaging break this repo exists to surface. Tracked upstream in moq-dev/moq's Homebrew packaging.
 
 A broken published package fails only its own matrix cells (see `mark_broken` in `smoke.sh` / `token.sh`); it never aborts the rest of the run.
