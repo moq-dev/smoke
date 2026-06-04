@@ -3,6 +3,11 @@ name: Smoke
 on:
   # Manual on-demand runs.
   workflow_dispatch:
+  # On every PR: the harness itself (smoke.sh / token.sh / clients) is what
+  # changes here, so run the matrix against the published packages to catch a
+  # broken cell before it merges. Published-package regressions still surface
+  # nightly; this guards changes to the test.
+  pull_request:
   # Nightly: catches breakage from a freshly published wheel / formula / .deb /
   # npm / go module that a developer wouldn't notice until a user hit it.
   schedule:
