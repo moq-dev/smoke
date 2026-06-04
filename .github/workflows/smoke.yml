@@ -53,6 +53,11 @@ jobs:
             channel: nix
           - os: macos-latest
             channel: nix
+          # Docker Hub (moqdev/moq-relay + moqdev/moq-cli). Linux only: the
+          # wrappers use `--network host`, which needs a native Docker daemon
+          # (GitHub's macOS runners have none).
+          - os: ubuntu-latest
+            channel: docker
 
     steps:
       - name: Checkout
@@ -138,6 +143,19 @@ jobs:
             echo "RELAY_BIN=$relay/bin/moq-relay"
             echo "MOQ_BIN=$cli/bin/moq-cli"
             echo "TOKEN_BIN=$token/bin/moq-token-cli"
+          } >> "$GITHUB_ENV"
+
+      - name: Pull moqdev images (docker channel)
+        if: matrix.channel == 'docker'
+        # Pull :latest fresh, then point smoke.sh at the wrapper scripts (which
+        # `docker run --network host` the images) via RELAY_BIN/MOQ_BIN. Docker is
+        # preinstalled on the Linux runners.
+        run: |
+          docker pull moqdev/moq-relay
+          docker pull moqdev/moq-cli
+          {
+            echo "RELAY_BIN=$PWD/clients/docker/moq-relay"
+            echo "MOQ_BIN=$PWD/clients/docker/moq-cli"
           } >> "$GITHUB_ENV"
 
       # ── browser deps (Chromium runtime libs on Linux) ──────────────────

@@ -49,6 +49,15 @@ else
     note FAIL "token.sh no longer pulls an unpinned moqdev/moq-token-cli :latest"
     fail=1
 fi
+# The media Docker channel (relay + cli wrappers) must use the unpinned (:latest)
+# images, and CI must pull them fresh.
+if grep -qF 'moqdev/moq-relay}' clients/docker/moq-relay && grep -qF 'moqdev/moq-cli}' clients/docker/moq-cli &&
+    grep -qF 'docker pull moqdev/moq-relay' .github/workflows/smoke.yml; then
+    note ok "moqdev/moq-relay + moqdev/moq-cli -> :latest (pulled each run)"
+else
+    note FAIL "the moqdev relay/cli Docker images are no longer unpinned :latest + pulled fresh"
+    fail=1
+fi
 # The jsDelivr CDN variant must not pin @version, so it serves the latest release.
 if grep -qE 'cdn\.jsdelivr\.net/npm/@moq/[a-z-]+@[0-9]' clients/js/jsdelivr/index.html; then
     note FAIL "jsdelivr/index.html pins a @moq version (drop @x.y.z so the CDN serves latest)"
