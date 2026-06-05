@@ -44,20 +44,22 @@ jobs:
             channel: cargo
           - os: ubuntu-latest
             channel: apt
-          - os: macos-latest
-            channel: cargo
-          - os: macos-latest
-            channel: brew
           # The moq flake is itself a public channel (nix run github:moq-dev/moq).
           - os: ubuntu-latest
-            channel: nix
-          - os: macos-latest
             channel: nix
           # Docker Hub (moqdev/moq-relay + moqdev/moq-cli). Linux only: the
           # wrappers use `--network host`, which needs a native Docker daemon
           # (GitHub's macOS runners have none).
           - os: ubuntu-latest
             channel: docker
+          # macOS cells temporarily disabled to cut CI spend (over budget this
+          # month). Re-enable by uncommenting; nothing else depends on them.
+          # - os: macos-latest
+          #   channel: cargo
+          # - os: macos-latest
+          #   channel: brew
+          # - os: macos-latest
+          #   channel: nix
 
     steps:
       - name: Checkout
