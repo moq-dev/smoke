@@ -130,8 +130,10 @@ cleanup() {
     [[ -n "$RELAY_PID" ]] && kill_tree "$RELAY_PID"
     # The docker-channel relay runs in a container that outlives a SIGKILL of its
     # wrapper's runtime client, so kill_tree alone leaves it holding the port and
-    # blocking the next run in the same job. Reap it by name (no-op otherwise).
-    if [[ -n "${RELAY_CONTAINER:-}" ]] && have "${SMOKE_DOCKER:-docker}"; then
+    # blocking the next run in the same job. Reap it by name -- but only when the
+    # docker wrapper is actually the relay, so a non-docker run on a host that
+    # happens to have docker doesn't delete an unrelated container of that name.
+    if [[ "$RELAY" == */clients/docker/moq-relay ]] && have "${SMOKE_DOCKER:-docker}"; then
         "${SMOKE_DOCKER:-docker}" rm -f "$RELAY_CONTAINER" >/dev/null 2>&1 || true
     fi
     rm -rf "$TMP"
