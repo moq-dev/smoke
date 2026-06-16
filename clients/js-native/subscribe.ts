@@ -61,12 +61,14 @@ async function run(): Promise<void> {
 
 		const bc = connection.consume(path);
 
-		// The .hang catalog lives on the "catalog.json" track. A lazy publisher may
-		// announce video in a later update, so keep reading frames until one has it.
-		const catalog = bc.subscribe("catalog.json", Catalog.PRIORITY.catalog);
+		// The .hang catalog lives on the "catalog.json" track. Catalog.Consumer
+		// reconstructs each catalog update from its snapshot+delta frames and
+		// validates it against RootSchema. A lazy publisher may announce video in a
+		// later update, so keep pulling updates until one carries a video track.
+		const catalog = new Catalog.Consumer(bc.subscribe("catalog.json", Catalog.PRIORITY.catalog));
 		let videoTrack: string | undefined;
 		while (!videoTrack) {
-			const root = await Catalog.fetch(catalog);
+			const root = await catalog.next();
 			if (!root) throw new Error("catalog ended without a video track");
 			const renditions = root.video?.renditions;
 			if (renditions) videoTrack = Object.keys(renditions)[0];
