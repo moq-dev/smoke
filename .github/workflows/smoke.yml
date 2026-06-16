@@ -91,15 +91,18 @@ jobs:
           # gcc (cc) for the C client is already on the runner.
           # gstreamer1.0-* provides gst-launch/gst-inspect + the core elements
           # (filesink) the moq-gst subscriber loads the prebuilt plugin against.
-          sudo apt-get install -y ffmpeg curl procps coreutils jq \
+          # pkg-config + cmake drive the c-pkgconfig / c-cmake build variants
+          # (they consume the prebuilt libmoq's moq.pc and lib/cmake/moq package).
+          sudo apt-get install -y ffmpeg curl procps coreutils jq pkg-config cmake \
             gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good
 
       - name: System deps (macOS)
         if: runner.os == 'macOS'
         run: |
           # clang (cc) for the C client and swift for the Swift client ship with Xcode.
+          # pkg-config + cmake drive the c-pkgconfig / c-cmake build variants.
           # gstreamer is the system runtime the prebuilt moq-gst plugin links against.
-          brew install ffmpeg coreutils jq gstreamer
+          brew install ffmpeg coreutils jq pkg-config cmake gstreamer
           # GNU coreutils provides `timeout` (macOS ships neither it nor pgrep
           # under those names by default; pgrep exists, timeout does not).
           echo "$(brew --prefix)/opt/coreutils/libexec/gnubin" >> "$GITHUB_PATH"
@@ -187,7 +190,9 @@ jobs:
           # currently fails (the polyfill's napi CJS named-import breaks node's ESM
           # loader) -- kept to track the upstream fix.
           native="js-native-node,js-native-bun"
-          subs="rust,python,go,kotlin,c,gst,$browser,$native"
+          # c / c-pkgconfig / c-cmake: same libmoq client built three ways, to
+          # exercise the moq.pc and CMake-package consumer paths, not just -I/-L.
+          subs="rust,python,go,kotlin,c,c-pkgconfig,c-cmake,gst,$browser,$native"
           if [ "$RUNNER_OS" = "macOS" ]; then subs="$subs,swift"; fi
           ./smoke.sh \
             --publishers "rust,python,$browser" \

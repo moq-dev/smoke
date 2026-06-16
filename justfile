@@ -18,7 +18,7 @@ smoke *args:
 # Full cross-language matrix with browser cold-start headroom. Rust + browser
 # publish; everyone subscribes (swift needs the macOS Xcode toolchain).
 full:
-    ./smoke.sh --publishers rust,python,js-vite,js-esbuild,js-jsdelivr --subscribers rust,python,go,swift,kotlin,c,gst,js-vite,js-esbuild,js-jsdelivr,js-native-node,js-native-bun --timeout 30
+    ./smoke.sh --publishers rust,python,js-vite,js-esbuild,js-jsdelivr --subscribers rust,python,go,swift,kotlin,c,c-pkgconfig,c-cmake,gst,js-vite,js-esbuild,js-jsdelivr,js-native-node,js-native-bun --timeout 30
 
 # Token interop: install moq-token in each published flavour and cross-verify.
 # The Rust moq-token-cli comes from a channel (PATH); @moq/token comes from npm,
