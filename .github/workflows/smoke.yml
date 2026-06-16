@@ -212,8 +212,16 @@ jobs:
       # tampered tokens and the wrong key.
       - name: Token interop
         run: |
-          impls="rust,js-node,js-bun"
-          # The Docker cell needs a daemon; GitHub's macOS runners have none, so
-          # it's Linux-only. (Docker is preinstalled on the Linux runners.)
-          if [ "$RUNNER_OS" = "Linux" ]; then impls="$impls,rust-docker"; fi
+          # The `rust` impl needs moq-token-cli on PATH, which only the
+          # cargo/apt/brew/nix channels install. The docker channel ships no such
+          # binary, so it exercises the Rust verifier through the
+          # moqdev/moq-token-cli image (rust-docker) instead of plain `rust`.
+          if [ "${{ matrix.channel }}" = "docker" ]; then
+            impls="js-node,js-bun,rust-docker"
+          else
+            impls="rust,js-node,js-bun"
+            # The Docker cell needs a daemon; GitHub's macOS runners have none, so
+            # it's Linux-only. (Docker is preinstalled on the Linux runners.)
+            if [ "$RUNNER_OS" = "Linux" ]; then impls="$impls,rust-docker"; fi
+          fi
           ./token.sh --generators "$impls" --verifiers "$impls"
