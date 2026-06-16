@@ -29,6 +29,11 @@ NEGATIVE=0
 # Binaries under test. Whatever channel installed them (cargo/brew/apt) just has
 # to leave them on PATH; override here to point at a specific build.
 RELAY="${RELAY_BIN:-moq-relay}"
+# Name of the docker-channel relay container, shared with clients/docker/moq-relay
+# so cleanup() can reap it after a SIGKILL of the wrapper (see cleanup()). Exported
+# so the wrapper binds the same name; ignored by the non-docker channels.
+RELAY_CONTAINER="${MOQ_RELAY_CONTAINER:-moq-relay-smoke}"
+export MOQ_RELAY_CONTAINER="$RELAY_CONTAINER"
 # The CLI's real binary name is `moq` (what the apt/rpm packages install). `cargo
 # install moq-cli` instead names it after the crate, `moq-cli`. Honor MOQ_BIN if
 # set, otherwise pick whichever name the channel left on PATH (resolved once the
@@ -123,6 +128,12 @@ cleanup() {
     # Reap the last publisher too; subscribers self-terminate via their timeouts.
     [[ -n "${PUB_PID:-}" ]] && kill_tree "$PUB_PID"
     [[ -n "$RELAY_PID" ]] && kill_tree "$RELAY_PID"
+    # The docker-channel relay runs in a container that outlives a SIGKILL of its
+    # wrapper's runtime client, so kill_tree alone leaves it holding the port and
+    # blocking the next run in the same job. Reap it by name (no-op otherwise).
+    if [[ -n "${RELAY_CONTAINER:-}" ]] && have "${SMOKE_DOCKER:-docker}"; then
+        "${SMOKE_DOCKER:-docker}" rm -f "$RELAY_CONTAINER" >/dev/null 2>&1 || true
+    fi
     rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -513,6 +524,13 @@ if needs gst; then
     fi
 fi
 
+# A relay from a previous run in the same job is reaped by cleanup(), but the
+# kernel can take a moment to release the (host-network) socket afterwards, so
+# wait briefly for the port to clear before treating it as a real conflict.
+for _ in $(seq 1 20); do
+    curl -sf "$URL/certificate.sha256" >/dev/null 2>&1 || break
+    sleep 0.5
+done
 if curl -sf "$URL/certificate.sha256" >/dev/null 2>&1; then
     echo "error: something is already listening on 127.0.0.1:4443 (stale relay?)" >&2
     exit 1
