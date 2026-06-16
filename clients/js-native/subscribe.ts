@@ -14,6 +14,7 @@ import { parseArgs } from "node:util";
 import * as Catalog from "@moq/hang/catalog";
 import * as Moq from "@moq/net";
 import { install } from "@moq/web-transport";
+import * as z from "zod/mini";
 
 // globalThis.WebTransport = the polyfill (no-op if a native one already exists).
 // @moq/net's connect() reads globalThis.WebTransport at call time, so this just
@@ -63,11 +64,14 @@ async function run(): Promise<void> {
 
 		// The .hang catalog lives on the "catalog.json" track. A lazy publisher may
 		// announce video in a later update, so keep reading frames until one has it.
+		// @moq/hang's catalog module is schema-only (it dropped the fetch/decode
+		// helpers), so read each JSON frame and validate it against RootSchema here.
 		const catalog = bc.subscribe("catalog.json", Catalog.PRIORITY.catalog);
 		let videoTrack: string | undefined;
 		while (!videoTrack) {
-			const root = await Catalog.fetch(catalog);
-			if (!root) throw new Error("catalog ended without a video track");
+			const frame = await catalog.readFrame();
+			if (!frame) throw new Error("catalog ended without a video track");
+			const root = z.parse(Catalog.RootSchema, JSON.parse(new TextDecoder().decode(frame)));
 			const renditions = root.video?.renditions;
 			if (renditions) videoTrack = Object.keys(renditions)[0];
 		}
