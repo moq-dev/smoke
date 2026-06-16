@@ -23,7 +23,7 @@ echo "== no committed package lock files =="
 locks=$(git ls-files 2>/dev/null | grep -E '(^|/)(go\.sum|bun\.lock|bun\.lockb|Cargo\.lock|uv\.lock|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|Pipfile\.lock|Package\.resolved|gradle\.lockfile)$' || true)
 if [[ -n "$locks" ]]; then
     note FAIL "package lock files are checked in (delete them and add to .gitignore):"
-    echo "$locks" | sed 's/^/        /'
+    printf '        %s\n' "${locks//$'\n'/$'\n'        }"
     fail=1
 else
     note ok "none tracked"
@@ -32,17 +32,27 @@ fi
 echo "== moq packages requested at latest =="
 for dep in @moq/watch @moq/publish; do
     ver=$(json_dep "$dep")
-    if [[ "$ver" == "latest" ]]; then note ok "$dep -> \"$ver\""; else note FAIL "$dep pinned to \"$ver\" (want \"latest\")"; fail=1; fi
+    if [[ "$ver" == "latest" ]]; then note ok "$dep -> \"$ver\""; else
+        note FAIL "$dep pinned to \"$ver\" (want \"latest\")"
+        fail=1
+    fi
 done
 # The native-JS client (@moq/net + @moq/hang + @moq/web-transport) must also be latest.
 for dep in @moq/net @moq/hang @moq/web-transport; do
     ver=$(grep -oE "\"$dep\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" clients/js-native/package.json | sed -E 's/.*"([^"]*)"$/\1/')
-    if [[ "$ver" == "latest" ]]; then note ok "$dep -> \"$ver\""; else note FAIL "$dep pinned to \"$ver\" (want \"latest\")"; fail=1; fi
+    if [[ "$ver" == "latest" ]]; then note ok "$dep -> \"$ver\""; else
+        note FAIL "$dep pinned to \"$ver\" (want \"latest\")"
+        fail=1
+    fi
 done
 # The token client (@moq/token, driven by token.sh under node and bun) must be latest.
 ver=$(grep -oE "\"@moq/token\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" clients/token/js/package.json | sed -E 's/.*"([^"]*)"$/\1/')
-if [[ "$ver" == "latest" ]]; then note ok "@moq/token -> \"$ver\""; else note FAIL "@moq/token pinned to \"$ver\" (want \"latest\")"; fail=1; fi
+if [[ "$ver" == "latest" ]]; then note ok "@moq/token -> \"$ver\""; else
+    note FAIL "@moq/token pinned to \"$ver\" (want \"latest\")"
+    fail=1
+fi
 # The token Docker image must be the unpinned (:latest) tag, pulled fresh each run.
+# shellcheck disable=SC2016  # grepping for these literal strings in token.sh; the $vars must NOT expand here
 if grep -qF 'DOCKER_TOKEN_IMAGE:-moqdev/moq-token-cli}' token.sh && grep -qF '"$DOCKER" pull "$DOCKER_TOKEN_IMAGE"' token.sh; then
     note ok "moqdev/moq-token-cli -> :latest (pulled each run)"
 else
@@ -65,6 +75,7 @@ if grep -qE 'cdn\.jsdelivr\.net/npm/@moq/[a-z-]+@[0-9]' clients/js/jsdelivr/inde
 else
     note ok "jsdelivr @moq/* -> unpinned (latest)"
 fi
+# shellcheck disable=SC2016  # grepping for this literal line in smoke.sh; $PY must NOT expand here
 if grep -q 'uv pip install --quiet --python "$PY" moq-rs' smoke.sh; then
     note ok "moq-rs -> uv pip install (unpinned)"
 else

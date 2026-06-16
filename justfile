@@ -18,7 +18,7 @@ smoke *args:
 # Full cross-language matrix with browser cold-start headroom. Rust + browser
 # publish; everyone subscribes (swift needs the macOS Xcode toolchain).
 full:
-    ./smoke.sh --publishers rust,python,js-vite,js-esbuild,js-jsdelivr --subscribers rust,python,go,swift,kotlin,c,gst,js-vite,js-esbuild,js-jsdelivr,js-native-node,js-native-bun --timeout 30
+    ./smoke.sh --publishers rust,python,js-vite,js-esbuild,js-jsdelivr --subscribers rust,python,go,swift,kotlin,c,c-pkgconfig,c-cmake,gst,js-vite,js-esbuild,js-jsdelivr,js-native-node,js-native-bun --timeout 30
 
 # Token interop: install moq-token in each published flavour and cross-verify.
 # The Rust moq-token-cli comes from a channel (PATH); @moq/token comes from npm,
@@ -67,9 +67,12 @@ negative *args:
 freshness:
     ./freshness.sh
 
-# Lint the harness. Each tool is guarded so it skips when not on PATH.
+# Lint the harness. shfmt discovers every shell script (incl. the extensionless
+# clients/docker/* wrappers) and reads .editorconfig for style; shellcheck lints
+# the same set. Each tool is guarded so it skips when not on PATH (nix develop
+# provides them all).
 check:
-    command -v shellcheck >/dev/null && shellcheck smoke.sh freshness.sh token.sh || echo "shellcheck: skipped"
-    command -v shfmt >/dev/null && shfmt -d -i 4 -ci smoke.sh freshness.sh token.sh || echo "shfmt: skipped"
-    command -v actionlint >/dev/null && actionlint || echo "actionlint: skipped"
+    @if command -v shfmt >/dev/null 2>&1; then shfmt --diff $(shfmt -f .); else echo "shfmt: skipped"; fi
+    @if command -v shellcheck >/dev/null 2>&1 && command -v shfmt >/dev/null 2>&1; then shellcheck $(shfmt -f .); else echo "shellcheck: skipped"; fi
+    @command -v actionlint >/dev/null && actionlint || echo "actionlint: skipped"
     just freshness

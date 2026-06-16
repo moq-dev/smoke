@@ -84,13 +84,17 @@ needs() {
 
 TMP=$(mktemp -d)
 RELAY_PID=""
-PY=""           # python interpreter with moq-rs installed (set in prepare)
-GO_SMOKE=""     # compiled Go client binary (set in prepare)
-SWIFT_SMOKE=""  # compiled Swift client binary (set in prepare)
-KOTLIN_SMOKE="" # Kotlin run script from `gradle installDist` (set in prepare)
-C_SMOKE=""      # compiled C client binary (set in prepare)
+PY=""             # python interpreter with moq-rs installed (set in prepare)
+GO_SMOKE=""       # compiled Go client binary (set in prepare)
+SWIFT_SMOKE=""    # compiled Swift client binary (set in prepare)
+KOTLIN_SMOKE=""   # Kotlin run script from `gradle installDist` (set in prepare)
+C_SMOKE=""        # C client, hand-rolled -I/-L/-l build (set in prepare)
+C_PC_SMOKE=""     # C client, built via pkg-config + moq.pc (set in prepare)
+C_CMAKE_SMOKE=""  # C client, built via the shipped CMake package (set in prepare)
+LIBMOQ_ROOT=""    # extracted libmoq prebuilt tarball root, shared by the 3 C builds
+LIBMOQ_OS_LIBS="" # system libs for the hand-rolled C build (set in libmoq_fetch)
 GST_PLUGIN_DIR="" # dir holding the moq-gst plugin (libgstmoq.{so,dylib}; set in prepare)
-BROKEN_LANGS="" # clients whose public package failed to install/build
+BROKEN_LANGS=""   # clients whose public package failed to install/build
 
 mark_broken() {
     # A client whose published package won't install/build fails only its own
@@ -155,23 +159,34 @@ run_swift() {
         -u CPATH -u LIBRARY_PATH -u MACOSX_DEPLOYMENT_TARGET swift "$@"
 }
 
-# Download the latest libmoq prebuilt release for this platform and compile the C
-# client against it. The tarball ships include/moq.h + lib/libmoq.a.
-c_prepare() {
-    local cc="${CC:-cc}" target os_libs tag ver url root hdr=()
-    have "$cc" || { echo "no C compiler ($cc) on PATH" >&2; return 1; }
-    have curl || { echo "curl required" >&2; return 1; }
-    have jq || { echo "jq required" >&2; return 1; }
+# Download the latest libmoq prebuilt release for this platform. Sets LIBMOQ_ROOT
+# (extracted tarball root) and LIBMOQ_OS_LIBS (system libs for the hand-rolled
+# build). Idempotent: the three C build variants share one download. The tarball
+# ships include/moq.h, lib/libmoq.a, lib/pkgconfig/moq.pc and lib/cmake/moq/.
+libmoq_fetch() {
+    [[ -n "$LIBMOQ_ROOT" && -d "$LIBMOQ_ROOT" ]] && return 0
+    local target tag ver url hdr=()
+    have curl || {
+        echo "curl required" >&2
+        return 1
+    }
+    have jq || {
+        echo "jq required" >&2
+        return 1
+    }
     case "$(uname -s)/$(uname -m)" in
         Darwin/arm64) target=aarch64-apple-darwin ;;
         Darwin/x86_64) target=x86_64-apple-darwin ;;
         Linux/x86_64) target=x86_64-unknown-linux-gnu ;;
         Linux/aarch64 | Linux/arm64) target=aarch64-unknown-linux-gnu ;;
-        *) echo "unsupported platform: $(uname -s)/$(uname -m)" >&2; return 1 ;;
+        *)
+            echo "unsupported platform: $(uname -s)/$(uname -m)" >&2
+            return 1
+            ;;
     esac
     case "$(uname -s)" in
-        Darwin) os_libs="-framework CoreFoundation -framework Security" ;;
-        *) os_libs="-lpthread -ldl -lm" ;;
+        Darwin) LIBMOQ_OS_LIBS="-framework CoreFoundation -framework Security" ;;
+        *) LIBMOQ_OS_LIBS="-lpthread -ldl -lm" ;;
     esac
     # Latest libmoq-v* release, never pinned. Authenticated if a token is around
     # (CI) to dodge the 60/hr anonymous GitHub API limit.
@@ -180,15 +195,83 @@ c_prepare() {
     # the ${arr[@]+...} guard expands to nothing when the array is unset/empty.
     tag=$(curl -sf ${hdr[@]+"${hdr[@]}"} "https://api.github.com/repos/moq-dev/moq/releases?per_page=100" |
         jq -r '.[].tag_name' | grep '^libmoq-v' | head -1)
-    [[ -n "$tag" ]] || { echo "no libmoq-v* release found" >&2; return 1; }
+    [[ -n "$tag" ]] || {
+        echo "no libmoq-v* release found" >&2
+        return 1
+    }
     ver=${tag#libmoq-v}
     url="https://github.com/moq-dev/moq/releases/download/$tag/moq-$ver-$target.tar.gz"
     echo "libmoq $tag ($target)"
     mkdir -p "$TMP/libmoq"
-    curl -sfL "$url" | tar xz -C "$TMP/libmoq" || { echo "download/extract failed: $url" >&2; return 1; }
-    root="$TMP/libmoq/moq-$ver-$target"
-    # shellcheck disable=SC2086  # os_libs is a deliberate multi-flag word list
-    "$cc" "$CLIENTS/c/subscribe.c" -I"$root/include" -L"$root/lib" -lmoq $os_libs -o "$C_SMOKE"
+    curl -sfL "$url" | tar xz -C "$TMP/libmoq" || {
+        echo "download/extract failed: $url" >&2
+        return 1
+    }
+    LIBMOQ_ROOT="$TMP/libmoq/moq-$ver-$target"
+}
+
+# Hand-rolled build: -I/-L/-l with system libs we hardcode here. The baseline
+# "does the static archive link at all" check; ignores moq.pc and the CMake
+# config entirely.
+c_build_direct() {
+    local cc="${CC:-cc}" out="$1"
+    have "$cc" || {
+        echo "no C compiler ($cc) on PATH" >&2
+        return 1
+    }
+    # shellcheck disable=SC2086  # LIBMOQ_OS_LIBS is a deliberate multi-flag word list
+    "$cc" "$CLIENTS/c/subscribe.c" -I"$LIBMOQ_ROOT/include" -L"$LIBMOQ_ROOT/lib" -lmoq \
+        $LIBMOQ_OS_LIBS -o "$out"
+}
+
+# pkg-config build: resolve cflags/libs from the shipped moq.pc, the way a real
+# consumer (e.g. FFmpeg --enable-libmoq) does. libmoq is a static archive, so
+# --static pulls Libs.private (the system frameworks/libs) too. A wrong
+# includedir/libdir or a missing framework in moq.pc fails here -- exactly the
+# breakage the hand-rolled build above can't see.
+c_build_pkgconfig() {
+    local cc="${CC:-cc}" out="$1" cflags libs
+    have "$cc" || {
+        echo "no C compiler ($cc) on PATH" >&2
+        return 1
+    }
+    have pkg-config || {
+        echo "pkg-config not on PATH (apt install pkg-config / brew install pkgconf)" >&2
+        return 1
+    }
+    export PKG_CONFIG_PATH="$LIBMOQ_ROOT/lib/pkgconfig"
+    cflags=$(pkg-config --cflags moq) || {
+        echo "pkg-config --cflags moq failed" >&2
+        return 1
+    }
+    libs=$(pkg-config --static --libs moq) || {
+        echo "pkg-config --static --libs moq failed" >&2
+        return 1
+    }
+    # shellcheck disable=SC2086  # cflags/libs are deliberate multi-flag word lists
+    "$cc" "$CLIENTS/c/subscribe.c" $cflags $libs -o "$out"
+}
+
+# CMake build: find_package(moq) against the shipped lib/cmake/moq package, the
+# way a CMake consumer imports the moq::moq target. A broken config (wrong paths,
+# missing target or system libs) fails configure/build here. CMAKE_PREFIX_PATH
+# points at the extracted tarball root; the binary lands at <builddir>/smoke.
+c_build_cmake() {
+    local builddir="$1"
+    have cmake || {
+        echo "cmake not on PATH (apt install cmake / brew install cmake)" >&2
+        return 1
+    }
+    rm -rf "$builddir"
+    cmake -S "$CLIENTS/c" -B "$builddir" -DCMAKE_PREFIX_PATH="$LIBMOQ_ROOT" \
+        -DCMAKE_BUILD_TYPE=Release >/dev/null || {
+        echo "cmake configure failed" >&2
+        return 1
+    }
+    cmake --build "$builddir" >/dev/null || {
+        echo "cmake build failed" >&2
+        return 1
+    }
 }
 
 # Download the latest moq-gst prebuilt release for this platform and confirm the
@@ -201,51 +284,84 @@ c_prepare() {
 # against nixpkgs' gst anyway, so this cell wants a real system gst install.)
 gst_prepare() {
     local target tag ver url root hdr=()
-    have gst-launch-1.0 || { echo "gst-launch-1.0 not on PATH (apt install gstreamer1.0-tools / brew install gstreamer)" >&2; return 1; }
-    have gst-inspect-1.0 || { echo "gst-inspect-1.0 not on PATH" >&2; return 1; }
+    have gst-launch-1.0 || {
+        echo "gst-launch-1.0 not on PATH (apt install gstreamer1.0-tools / brew install gstreamer)" >&2
+        return 1
+    }
+    have gst-inspect-1.0 || {
+        echo "gst-inspect-1.0 not on PATH" >&2
+        return 1
+    }
     # Escape hatch: point at a locally-built plugin dir (e.g. target/release after
     # `cargo build -p moq-gst`) instead of the published tarball, mirroring the
     # RELAY_BIN/MOQ_BIN overrides. Skips the download but still load-checks it.
     if [[ -n "${MOQ_GST_PLUGIN_DIR:-}" ]]; then
         GST_PLUGIN_DIR="$MOQ_GST_PLUGIN_DIR"
         echo "moq-gst (local: $GST_PLUGIN_DIR)"
-        [[ -d "$GST_PLUGIN_DIR" ]] || { echo "MOQ_GST_PLUGIN_DIR is not a directory: $GST_PLUGIN_DIR" >&2; return 1; }
+        [[ -d "$GST_PLUGIN_DIR" ]] || {
+            echo "MOQ_GST_PLUGIN_DIR is not a directory: $GST_PLUGIN_DIR" >&2
+            return 1
+        }
         GST_PLUGIN_PATH_1_0="$GST_PLUGIN_DIR" GST_PLUGIN_SYSTEM_PATH_1_0="" \
             GST_REGISTRY_1_0="$TMP/gst-registry.bin" \
             gst-inspect-1.0 moq 2>/dev/null | grep -qE '^[[:space:]]+moqsrc:' ||
-            { echo "moqsrc not exposed (plugin failed to load against this GStreamer)" >&2; return 1; }
+            {
+                echo "moqsrc not exposed (plugin failed to load against this GStreamer)" >&2
+                return 1
+            }
         return 0
     fi
-    have curl || { echo "curl required" >&2; return 1; }
-    have jq || { echo "jq required" >&2; return 1; }
+    have curl || {
+        echo "curl required" >&2
+        return 1
+    }
+    have jq || {
+        echo "jq required" >&2
+        return 1
+    }
     case "$(uname -s)/$(uname -m)" in
         Darwin/arm64) target=aarch64-apple-darwin ;;
         Darwin/x86_64) target=x86_64-apple-darwin ;;
         Linux/x86_64) target=x86_64-unknown-linux-gnu ;;
         Linux/aarch64 | Linux/arm64) target=aarch64-unknown-linux-gnu ;;
-        *) echo "unsupported platform: $(uname -s)/$(uname -m)" >&2; return 1 ;;
+        *)
+            echo "unsupported platform: $(uname -s)/$(uname -m)" >&2
+            return 1
+            ;;
     esac
     # Latest moq-gst-v* release, never pinned. Authenticated if a token is around
     # (CI) to dodge the 60/hr anonymous GitHub API limit.
     [[ -n "${GITHUB_TOKEN:-}" ]] && hdr=(-H "Authorization: Bearer $GITHUB_TOKEN")
     tag=$(curl -sf ${hdr[@]+"${hdr[@]}"} "https://api.github.com/repos/moq-dev/moq/releases?per_page=100" |
         jq -r '.[].tag_name' | grep '^moq-gst-v' | head -1)
-    [[ -n "$tag" ]] || { echo "no moq-gst-v* release found" >&2; return 1; }
+    [[ -n "$tag" ]] || {
+        echo "no moq-gst-v* release found" >&2
+        return 1
+    }
     ver=${tag#moq-gst-v}
     url="https://github.com/moq-dev/moq/releases/download/$tag/moq-gst-$ver-$target.tar.gz"
     echo "moq-gst $tag ($target)"
     mkdir -p "$TMP/moq-gst"
-    curl -sfL "$url" | tar xz -C "$TMP/moq-gst" || { echo "download/extract failed: $url" >&2; return 1; }
+    curl -sfL "$url" | tar xz -C "$TMP/moq-gst" || {
+        echo "download/extract failed: $url" >&2
+        return 1
+    }
     root="$TMP/moq-gst/moq-gst-$ver-$target"
     GST_PLUGIN_DIR="$root/lib/gstreamer-1.0"
-    [[ -d "$GST_PLUGIN_DIR" ]] || { echo "plugin dir missing in tarball: $GST_PLUGIN_DIR" >&2; return 1; }
+    [[ -d "$GST_PLUGIN_DIR" ]] || {
+        echo "plugin dir missing in tarball: $GST_PLUGIN_DIR" >&2
+        return 1
+    }
     # gst-inspect exits 0 even when the .so fails to load, so grep for the
     # factory. Isolate discovery to our dir + a temp registry so a system-wide moq
     # plugin can't shadow it (mirrors moq-gst's own smoke.sh).
     GST_PLUGIN_PATH_1_0="$GST_PLUGIN_DIR" GST_PLUGIN_SYSTEM_PATH_1_0="" \
         GST_REGISTRY_1_0="$TMP/gst-registry.bin" \
         gst-inspect-1.0 moq 2>/dev/null | grep -qE '^[[:space:]]+moqsrc:' ||
-        { echo "moqsrc not exposed (plugin failed to load against this GStreamer)" >&2; return 1; }
+        {
+            echo "moqsrc not exposed (plugin failed to load against this GStreamer)" >&2
+            return 1
+        }
 }
 
 # ── setup ───────────────────────────────────────────────────────────────────
@@ -354,12 +470,38 @@ if needs kotlin; then
     fi
 fi
 
-if needs c; then
-    echo "building c client (libmoq prebuilt release)..."
-    C_SMOKE="$TMP/c-smoke"
-    if c_prepare >"$TMP/c-build.log" 2>&1; then :; else
-        mark_broken c "libmoq download / compile failed"
-        sed 's/^/        /' "$TMP/c-build.log" >&2 || true
+# The C client ships three build variants (c, c-pkgconfig, c-cmake) that all
+# produce the same subscribe-only binary from the same prebuilt libmoq; they
+# differ only in how the build discovers it: hand-rolled flags, pkg-config (the
+# moq.pc consumer path), or find_package (the CMake package consumer path).
+if needs c || needs c-pkgconfig || needs c-cmake; then
+    echo "building c client(s) against the libmoq prebuilt release..."
+    if libmoq_fetch >"$TMP/c-fetch.log" 2>&1; then
+        cat "$TMP/c-fetch.log"
+        if needs c; then
+            C_SMOKE="$TMP/c-smoke"
+            if c_build_direct "$C_SMOKE" >"$TMP/c-build.log" 2>&1; then :; else
+                mark_broken c "direct compile failed"
+                sed 's/^/        /' "$TMP/c-build.log" >&2 || true
+            fi
+        fi
+        if needs c-pkgconfig; then
+            C_PC_SMOKE="$TMP/c-pc-smoke"
+            if c_build_pkgconfig "$C_PC_SMOKE" >"$TMP/c-pc-build.log" 2>&1; then :; else
+                mark_broken c-pkgconfig "pkg-config build failed"
+                sed 's/^/        /' "$TMP/c-pc-build.log" >&2 || true
+            fi
+        fi
+        if needs c-cmake; then
+            C_CMAKE_SMOKE="$TMP/c-cmake/smoke"
+            if c_build_cmake "$TMP/c-cmake" >"$TMP/c-cmake-build.log" 2>&1; then :; else
+                mark_broken c-cmake "cmake build failed"
+                sed 's/^/        /' "$TMP/c-cmake-build.log" >&2 || true
+            fi
+        fi
+    else
+        sed 's/^/        /' "$TMP/c-fetch.log" >&2 || true
+        for v in c c-pkgconfig c-cmake; do mark_broken "$v" "libmoq download failed"; done
     fi
 fi
 
@@ -462,8 +604,17 @@ run_subscriber() {
         kotlin)
             "$KOTLIN_SMOKE" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
             ;;
-        c)
-            "$C_SMOKE" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
+        c | c-pkgconfig | c-cmake)
+            # Same subscribe-only client; the three cells differ only in how it
+            # was built (hand-rolled, pkg-config, or CMake) against the same
+            # prebuilt libmoq. The run is identical.
+            local bin
+            case "$lang" in
+                c) bin="$C_SMOKE" ;;
+                c-pkgconfig) bin="$C_PC_SMOKE" ;;
+                c-cmake) bin="$C_CMAKE_SMOKE" ;;
+            esac
+            "$bin" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
             ;;
         gst)
             # moqsrc exposes the broadcast's video as a Sometimes pad (video_%u,
