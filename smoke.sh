@@ -443,7 +443,7 @@ if needs js-vite || needs js-esbuild || needs js-jsdelivr; then
 fi
 
 # Native (non-browser) JS: the published @moq/net + @moq/hang under a runtime
-# with no native WebTransport, using the @fails-components/webtransport polyfill.
+# with no native WebTransport, using moq's own @moq/web-transport polyfill.
 # Run under bun (js-native-bun) and node (js-native-node).
 if needs js-native-bun || needs js-native-node; then
     echo "installing native-js client (@moq/net + @moq/hang + webtransport polyfill)..."

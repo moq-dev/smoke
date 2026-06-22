@@ -178,17 +178,16 @@ jobs:
 
       # ── run the full interop matrix ────────────────────────────────────
       # Publishers: rust, python, and the three browser variants publish today;
-      # go/swift/kotlin/c/gst subscribe only (go's module is also currently broken,
-      # and no moq-gst release has been cut yet, so gst is red until one ships).
+      # go/swift/kotlin/c/gst subscribe only (go builds on Linux against the
+      # published moq-go module; gst resolves the latest moq-gst-v* release).
       # Browser variants: js-vite, js-esbuild (bundlers), js-jsdelivr (CDN).
       # Swift needs the Xcode toolchain, so it's a macOS-only subscriber.
       # --timeout 30 gives headless Chromium cold-start headroom.
       - name: Smoke
         run: |
           browser="js-vite,js-esbuild,js-jsdelivr"
-          # js-native-bun works with moq's @moq/web-transport polyfill; js-native-node
-          # currently fails (the polyfill's napi CJS named-import breaks node's ESM
-          # loader) -- kept to track the upstream fix.
+          # Both run moq's @moq/web-transport polyfill. node briefly failed on the
+          # polyfill's napi CJS named-import; fixed in @moq/web-transport 0.1.2.
           native="js-native-node,js-native-bun"
           # c / c-pkgconfig / c-cmake: same libmoq client built three ways, to
           # exercise the moq.pc and CMake-package consumer paths, not just -I/-L.
