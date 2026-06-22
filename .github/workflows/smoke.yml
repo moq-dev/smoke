@@ -178,8 +178,8 @@ jobs:
 
       # ── run the full interop matrix ────────────────────────────────────
       # Publishers: rust, python, and the three browser variants publish today;
-      # go/swift/kotlin/c/gst subscribe only (go's module is also currently broken,
-      # and no moq-gst release has been cut yet, so gst is red until one ships).
+      # go/swift/kotlin/c/gst subscribe only (go builds on Linux against the
+      # published moq-go module; gst resolves the latest moq-gst-v* release).
       # Browser variants: js-vite, js-esbuild (bundlers), js-jsdelivr (CDN).
       # Swift needs the Xcode toolchain, so it's a macOS-only subscriber.
       # --timeout 30 gives headless Chromium cold-start headroom.
