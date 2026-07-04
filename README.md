@@ -16,7 +16,7 @@ We check that bytes move across implementations, not that H.264 decodes.
 
 | Client | Source under test | Install |
 |---|---|---|
-| `moq-relay` + `moq-cli` (Rust) | crates.io / Homebrew tap / apt repo / the moq flake / Docker Hub | `cargo install`, `brew install moq-dev/tap/...`, `apt install`, `nix build github:moq-dev/moq#...`, `docker run moqdev/moq-relay` |
+| `moq-relay` + `moq` (Rust) | crates.io / Homebrew tap / apt repo / the moq flake / Docker Hub | `cargo install`, `brew install moq-dev/tap/...`, `apt install`, `nix build github:moq-dev/moq#...`, `docker run moqdev/moq-relay` |
 | Python | [PyPI `moq-rs`](https://pypi.org/project/moq-rs/) (import `moq`) | `uv pip install moq-rs` |
 | Go | [`github.com/moq-dev/moq-go`](https://github.com/moq-dev/moq-go) | `go get` |
 | Browser | npm [`@moq/watch`](https://www.npmjs.com/package/@moq/watch) + [`@moq/publish`](https://www.npmjs.com/package/@moq/publish), delivered three ways | headless Chromium (Playwright) loading a **vite** bundle, an **esbuild** bundle, or straight from the **jsDelivr** ESM CDN |
@@ -32,10 +32,10 @@ Swift, Kotlin, C, and GStreamer **subscribe only**. The FFI wrappers (Swift/Kotl
 
 The **GStreamer** client downloads the latest `moq-gst` plugin tarball, points `GST_PLUGIN_PATH` at it, and runs `moqsrc url=… broadcast=… ! filesink` — the same "did a frame's bytes arrive" bar as every other subscriber, no decode. The prebuilt plugin dynamic-links the host's *system* GStreamer (the `.deb`/brew/tarball scenario), so this cell needs `gst-launch-1.0` + the core plugins on the system, not nix; under a bare nix shell with no system GStreamer it just marks itself unavailable. Point `MOQ_GST_PLUGIN_DIR` at a local `cargo build -p moq-gst` output to test an unreleased build.
 
-The Rust binaries (`moq-relay`, `moq-cli`) ship through five channels that deliver the *same* binaries. CI treats each as a separate test where the OS supports it: Linux exercises **apt**, **cargo**, **nix**, **docker**; macOS exercises **brew**, **cargo**, **nix**. `smoke.sh` itself just takes whatever is on `PATH` (or `RELAY_BIN`/`MOQ_BIN`); the channel is chosen by how the binaries are provided:
+The Rust binaries (`moq-relay`, `moq`) ship through five channels that deliver the *same* binaries. CI treats each as a separate test where the OS supports it: Linux exercises **apt**, **cargo**, **nix**, **docker**; macOS exercises **brew**, **cargo**, **nix**. `smoke.sh` itself just takes whatever is on `PATH` (or `RELAY_BIN`/`MOQ_BIN`); the channel is chosen by how the binaries are provided:
 
-- **cargo** / **brew** / **apt** put the binaries on `PATH` (`cargo install moq-relay moq-cli`, etc.).
-- **nix** builds them from the moq flake (`just nix-channel`), the same outputs `nix run github:moq-dev/moq#moq-cli` resolves. The moq flake is referenced ad-hoc with `--refresh`, so the moq version is always the latest default-branch build, never locked by this repo.
+- **cargo** / **brew** / **apt** put the binaries on `PATH` (`cargo install moq-relay moq-cli` installs `moq-relay` and `moq`, etc.).
+- **nix** builds them from the moq flake (`just nix-channel`), the same package output `nix run github:moq-dev/moq#moq-cli` resolves. The moq flake is referenced ad-hoc with `--refresh`, so the moq version is always the latest default-branch build, never locked by this repo.
 - **docker** points `RELAY_BIN`/`MOQ_BIN` at the wrapper scripts in [`clients/docker/`](clients/docker), which `docker run --network host` the published [`moqdev/moq-relay`](https://hub.docker.com/r/moqdev/moq-relay) + [`moqdev/moq-cli`](https://hub.docker.com/r/moqdev/moq-cli) images (`:latest`, pulled fresh). Host networking lets the containerised relay bind the ports the orchestrator and the cli containers reach on `127.0.0.1`, so the committed `smoke.toml` works unchanged. Linux-only (a native Docker daemon); the other language clients still install from their own registries, so this run also proves the Docker relay routes between every implementation. Override the runtime with `SMOKE_DOCKER=podman`.
 
 The **browser** client is itself three delivery variants of the *same* page, run as separate matrix cells, to catch breakage specific to how the package is consumed:
@@ -51,7 +51,7 @@ The repo ships a Nix flake (`.envrc` auto-loads it via direnv) with every client
 ```bash
 nix develop                       # drops you in a shell with the toolchain
 # then either bring the binaries via a channel...
-cargo install moq-relay moq-cli   # (or brew / apt)
+cargo install moq-relay moq-cli   # installs moq-relay + moq (or brew / apt)
 just full                         # full matrix, --timeout 30
 # ...or use the moq flake as the channel (builds moq, no install needed):
 just nix-channel --publishers rust,js-vite --subscribers rust,python,js-jsdelivr --timeout 30
@@ -62,7 +62,7 @@ just nix-channel --publishers rust,js-vite --subscribers rust,python,js-jsdelivr
 Without Nix, you need the relay + CLI on `PATH` plus the toolchains for whichever clients you include:
 
 ```bash
-cargo install moq-relay moq-cli       # or brew / apt
+cargo install moq-relay moq-cli       # installs moq-relay + moq (or brew / apt)
 # python -> uv ; go -> go ; browser -> bun (+ chromium)
 
 # default matrix is rust-only:
@@ -72,7 +72,7 @@ cargo install moq-relay moq-cli       # or brew / apt
 just full   # or: ./smoke.sh --publishers rust,python,js-vite --subscribers rust,js-jsdelivr ...
 
 # point at a specific build instead of PATH:
-RELAY_BIN=/path/to/moq-relay MOQ_BIN=/path/to/moq-cli ./smoke.sh
+RELAY_BIN=/path/to/moq-relay MOQ_BIN=/path/to/moq ./smoke.sh
 
 # prove the harness can fail: no publisher, every subscriber must time out.
 ./smoke.sh --negative --subscribers rust,python
@@ -96,7 +96,7 @@ clients/
   c/subscribe.c          subscribe via libmoq (prebuilt release)
   js-native/subscribe.ts subscribe via @moq/net + @moq/hang + WebTransport polyfill (node, bun)
   (gst)                   subscribe via the moq-gst plugin (moqsrc); no client dir, driven by gst-launch
-  docker/                 moq-relay + moq-cli wrappers: docker run the moqdev/* images (the docker channel)
+  docker/                 moq-relay + moq wrappers: docker run the moqdev/* images (the docker channel)
   token/js/              installs @moq/token (npm) for token.sh to drive under node + bun
 freshness.sh             enforces the "always latest, no package locks" policy
 .github/workflows/smoke.yml   nightly + on-demand CI matrix (os x channel)
@@ -112,14 +112,15 @@ published flavours, and this test proves they cross-verify:
 
 | Cell | Source under test | Install |
 |---|---|---|
-| `rust` | the `moq-token-cli` binary (crates.io / Homebrew tap / apt repo / the moq flake) | `cargo install moq-token-cli`, `brew install moq-dev/tap/moq-token-cli`, `apt install`, `nix run github:moq-dev/moq#moq-token-cli` |
+| `rust` | the `moq-token` binary (crates.io / Homebrew tap / apt repo / the moq flake) | `cargo install moq-token-cli`, `brew install moq-dev/tap/moq-token-cli`, `apt install`, `nix run github:moq-dev/moq#moq-token-cli` |
 | `js-node` | npm [`@moq/token`](https://www.npmjs.com/package/@moq/token)'s `moq-token` CLI, run under **node** | `npm i @moq/token` |
 | `js-bun` | the same published npm package, run under **bun** | `npm i @moq/token` |
 | `rust-docker` | the [`moqdev/moq-token-cli`](https://hub.docker.com/r/moqdev/moq-token-cli) Docker Hub image (`:latest`) | `docker run moqdev/moq-token-cli …` |
 
-Like `smoke.sh`, the Rust binary is taken from `PATH` (or `TOKEN_BIN`), so the
-install channel is whatever put `moq-token-cli` there; `@moq/token` is installed
-from npm on each run; `rust-docker` `docker pull`s the `moqdev/moq-token-cli`
+Like `smoke.sh`, the Rust binary is taken from `PATH` (or `TOKEN_BIN`), preferring
+`moq-token` and falling back to `moq-token-cli` while channels finish the rename;
+`@moq/token` is installed from npm on each run; `rust-docker` `docker pull`s the
+`moqdev/moq-token-cli`
 image fresh (`:latest`) and runs the CLI in a throwaway container with the scratch
 dir bind-mounted. The image is built `FROM nixos/nix` and ships the nix store, so
 it's a genuinely different artifact from the `cargo`/`brew`/`apt` binaries — and
@@ -166,14 +167,14 @@ just check       # lint + freshness
 This test tracks the **latest published** packages, so it sometimes runs ahead of a release. A red cell is the signal, not noise. As of this writing:
 
 - **Rust publish/subscribe** and **browser publish/subscribe** (all three delivery variants: vite, esbuild, jsDelivr): working (`cargo install` / `brew` / `apt` / `nix` + npm/CDN). The green baseline.
-- **Docker channel** (`moqdev/moq-relay` + `moqdev/moq-cli`, Linux): working. The containerised relay routes the full matrix and the containerised `moq-cli` publishes/subscribes end-to-end, validated against the published images.
+- **Docker channel** (`moqdev/moq-relay` + `moqdev/moq-cli`, Linux): working. The containerised relay routes the full matrix and the containerised `moq` publishes/subscribes end-to-end, validated against the published images.
 - **Python publish/subscribe**: working. `moq-rs` 0.2.16 shipped the streaming importer (`publish_media_stream`), so Python now publishes a raw Annex-B broadcast too, verified end-to-end against rust/swift/c subscribers.
 - **Swift / Kotlin / C subscribe**: working, verified end-to-end against the published 0.2.16 / 0.3.0 packages (`moq-dev/moq-swift`, `dev.moq:moq`, `libmoq`). Subscriber-only by choice.
 - **Native JS on bun** (`js-native-bun`): working. `@moq/net` + `@moq/hang` + moq's `@moq/web-transport` polyfill connect via WebTransport and read frames under Bun. (An earlier attempt with `@fails-components/webtransport` crashed Bun; moq's own polyfill is the one to use.)
 - **Native JS on node** (`js-native-node`): working. node briefly lagged bun here: `@moq/web-transport`'s `session.ts` did `import { NapiClient } from "../napi.js"` — a *named* import from a napi-rs CJS module whose exports node's ESM loader can't statically see, so node threw `does not provide an export named 'NapiClient'` while Bun's looser CJS interop accepted it. `@moq/web-transport` 0.1.2 shipped the predicted fix (default-import the now-`.cjs` binding, then destructure `NapiClient`), so this cell is green. Exactly the break-then-fix this repo exists to surface.
 - **Go (any role)**: working. The `moq-dev/moq-go` module was un-buildable (stuck at v0.2.15, missing the generated `moq.h` header and the prebuilt static libs, so `go get` + build failed); v0.2.22 now ships `moq.h` plus `libmoq_ffi.a` for linux (amd64/arm64), darwin, and windows, and a `CGO_ENABLED=1 go build` against it links cleanly — verified in a linux/amd64 container, clearing the blocker that kept this cell red. One caveat the matrix doesn't see: building the Go client on **macOS** still fails to link, because the module's darwin cgo `LDFLAGS` omit `-framework CoreServices` (needed by the bundled Rust `notify` crate's FSEvents backend); CI only builds Go on Linux. Tracked upstream in moq-dev/moq's `go/moq/cgo.go`.
 - **GStreamer subscribe** (`gst`): working. The first `moq-gst` releases have now shipped (latest `moq-gst-v0.2.7`, with apt/brew/rpm/tarball + nix artifacts), so the cell resolves the newest tag and downloads the prebuilt plugin instead of reporting "no moq-gst-v\* release found". The published plugin load-checks green — `gst-inspect-1.0 moq` exposes `moqsrc`/`moqsink` against a system GStreamer (verified locally against the 0.2.7 tarball) — and `moqsrc` reads a rust-published H.264 broadcast end-to-end.
-- **Token interop** (`token.sh`): working on **cargo / apt / nix** plus the **`moqdev/moq-token-cli` Docker image** (Linux). The published `moq-token-cli` (crates.io / apt / nix / Docker Hub) and `@moq/token` (npm, under both node and bun) cross-verify every token across `HS256`, `EdDSA`, `ES256`, and `RS256`, and each verifier rejects tampered tokens and the wrong key. The Docker cell (`rust-docker`) proves the image — built `FROM nixos/nix`, so it carries the libiconv the brew bottle used to leak — runs cleanly. Subscriber-only languages don't ship token tooling yet, so the matrix is rust (binary + Docker) + the two JS runtimes for now.
-- **Token interop on the Homebrew bottle** (`rust` cells, macOS `brew`): working. The `moq-dev/tap/moq-token-cli` bottle used to abort on launch — it baked in a `/nix/store/…-libiconv/lib/libiconv.2.dylib` rpath from the build sandbox that doesn't exist on a user's Mac (`dyld: Library not loaded`). The 0.5.31 bottle fixes it: its only `LC_RPATH` is now `/usr/lib`, so `@rpath/libiconv.2.dylib` resolves to the system libiconv and the binary runs (verified locally — `generate --algorithm HS256` succeeds, no leaked `/nix/store` rpath). `token.sh` still probes the binary once at startup, so a relapse would be caught again. Exactly the break-then-fix this repo exists to surface.
+- **Token interop** (`token.sh`): working on **cargo / apt / nix** plus the **`moqdev/moq-token-cli` Docker image** (Linux). The published `moq-token` binary (from crates.io / apt / nix / Docker Hub) and `@moq/token` (npm, under both node and bun) cross-verify every token across `HS256`, `EdDSA`, `ES256`, and `RS256`, and each verifier rejects tampered tokens and the wrong key. The Docker cell (`rust-docker`) proves the image — built `FROM nixos/nix`, so it carries the libiconv the brew bottle used to leak — runs cleanly. Subscriber-only languages don't ship token tooling yet, so the matrix is rust (binary + Docker) + the two JS runtimes for now.
+- **Token interop on the Homebrew bottle** (`rust` cells, macOS `brew`): working. The `moq-dev/tap/moq-token-cli` package's `moq-token` binary used to abort on launch — it baked in a `/nix/store/…-libiconv/lib/libiconv.2.dylib` rpath from the build sandbox that doesn't exist on a user's Mac (`dyld: Library not loaded`). The 0.5.31 bottle fixes it: its only `LC_RPATH` is now `/usr/lib`, so `@rpath/libiconv.2.dylib` resolves to the system libiconv and the binary runs (verified locally — `generate --algorithm HS256` succeeds, no leaked `/nix/store` rpath). `token.sh` still probes the binary once at startup, so a relapse would be caught again. Exactly the break-then-fix this repo exists to surface.
 
 A broken published package fails only its own matrix cells (see `mark_broken` in `smoke.sh` / `token.sh`); it never aborts the rest of the run.

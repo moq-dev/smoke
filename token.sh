@@ -4,7 +4,7 @@
 # moq-relay authenticates with JWTs minted by the moq-token tooling, which ships
 # in several flavours from several registries:
 #
-#   - rust    : the moq-token-cli binary (cargo / brew / apt / nix), on PATH
+#   - rust    : the moq-token binary (cargo / brew / apt / nix), on PATH
 #   - js-node : the @moq/token npm package's `moq-token` CLI, run under node
 #   - js-bun  : the same published npm package, run under bun
 #
@@ -35,7 +35,7 @@ ALGORITHMS="${TOKEN_ALGORITHMS:-HS256,EdDSA,ES256,RS256}"
 
 # The Rust CLI under test. Whatever channel installed it (cargo/brew/apt/nix)
 # just has to leave it on PATH; override here to point at a specific build.
-TOKEN="${TOKEN_BIN:-moq-token-cli}"
+TOKEN="${TOKEN_BIN:-}"
 
 # The published Docker image for the `rust-docker` cell. Untagged = :latest, the
 # tag the release pipeline moves to the newest version; pulled fresh each run.
@@ -115,6 +115,19 @@ cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 
 have() { command -v "$1" >/dev/null 2>&1; }
+
+resolve_token() {
+    # Prefer the renamed binary, but tolerate channels that still expose the old
+    # executable during rollout. TOKEN_BIN remains authoritative when set.
+    [[ -n "$TOKEN" ]] && return 0
+    if have moq-token; then
+        TOKEN=moq-token
+    elif have moq-token-cli; then
+        TOKEN=moq-token-cli
+    else
+        TOKEN=moq-token
+    fi
+}
 
 # ── per-implementation adapters ──────────────────────────────────────────────
 # Each implementation's CLI differs (flag names, key encoding, verify output),
@@ -215,6 +228,7 @@ verify() {
 
 # ── setup ────────────────────────────────────────────────────────────────────
 "$SMOKE_DIR/freshness.sh" || echo "WARN: freshness check failed (see above); continuing" >&2
+resolve_token
 
 if needs rust; then
     if ! have "$TOKEN"; then

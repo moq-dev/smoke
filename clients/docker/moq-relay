@@ -4,7 +4,7 @@
 #
 # smoke.sh points RELAY_BIN at this script and invokes it with the relay config
 # path. We bind-mount that file's directory and use host networking so the relay
-# binds the ports the orchestrator (curl on 127.0.0.1) and the moq-cli containers
+# binds the ports the orchestrator (curl on 127.0.0.1) and the moq containers
 # reach -- the committed smoke.toml's 127.0.0.1 listeners work unchanged.
 #
 # Linux-only: --network host needs a native Docker daemon sharing the host's

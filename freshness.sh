@@ -61,7 +61,7 @@ else
 fi
 # The media Docker channel (relay + cli wrappers) must use the unpinned (:latest)
 # images, and CI must pull them fresh.
-if grep -qF 'moqdev/moq-relay}' clients/docker/moq-relay && grep -qF 'moqdev/moq-cli}' clients/docker/moq-cli &&
+if grep -qF 'moqdev/moq-relay}' clients/docker/moq-relay && grep -qF 'moqdev/moq-cli}' clients/docker/moq &&
     grep -qF 'docker pull moqdev/moq-relay' .github/workflows/smoke.yml; then
     note ok "moqdev/moq-relay + moqdev/moq-cli -> :latest (pulled each run)"
 else
