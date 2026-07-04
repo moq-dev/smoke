@@ -34,10 +34,8 @@ RELAY="${RELAY_BIN:-moq-relay}"
 # so the wrapper binds the same name; ignored by the non-docker channels.
 RELAY_CONTAINER="${MOQ_RELAY_CONTAINER:-moq-relay-smoke}"
 export MOQ_RELAY_CONTAINER="$RELAY_CONTAINER"
-# The CLI's real binary name is `moq` (what the apt/rpm packages install). `cargo
-# install moq-cli` instead names it after the crate, `moq-cli`. Honor MOQ_BIN if
-# set, otherwise pick whichever name the channel left on PATH (resolved once the
-# `have` helper is defined, in require_tools).
+# The CLI binary under test. The package/crate is still distributed as moq-cli in
+# some channels, but the installed executable is `moq`. Honor MOQ_BIN if set.
 MOQ="${MOQ_BIN:-}"
 
 require_value() {
@@ -116,7 +114,7 @@ is_broken() {
 }
 
 kill_tree() {
-    # SIGKILL, depth-first. moq-cli ignores SIGTERM (handles only SIGINT), so a
+    # SIGKILL, depth-first. moq ignores SIGTERM (handles only SIGINT), so a
     # polite kill would leak it; these are ephemeral test processes, so -9 is fine.
     local pid="$1" child
     for child in $(pgrep -P "$pid" 2>/dev/null || true); do kill_tree "$child"; done
@@ -143,11 +141,9 @@ trap cleanup EXIT
 have() { command -v "$1" >/dev/null 2>&1; }
 
 require_tools() {
-    # Resolve the CLI binary name unless MOQ_BIN pinned it: the apt/rpm packages
-    # install `moq`, while `cargo install moq-cli` names it `moq-cli`. Prefer the
-    # packaged name, fall back to the cargo one.
+    # Resolve the CLI binary name unless MOQ_BIN pinned it.
     if [[ -z "$MOQ" ]]; then
-        if have moq; then MOQ=moq; elif have moq-cli; then MOQ=moq-cli; else MOQ=moq; fi
+        MOQ=moq
     fi
     # Only the relay, CLI, and harness essentials are hard requirements. A missing
     # per-client toolchain (uv / go / bun / swift / gradle / cc) just marks that
@@ -157,7 +153,7 @@ require_tools() {
         have "$t" || missing+=("$t")
     done
     have "$RELAY" || missing+=("$RELAY (cargo/brew/apt/nix install moq-relay)")
-    have "$MOQ" || missing+=("moq / moq-cli (cargo/brew/apt/nix install moq-cli)")
+    have "$MOQ" || missing+=("moq (cargo/brew/apt/nix install moq-cli)")
     if [[ ${#missing[@]} -gt 0 ]]; then
         echo "error: missing required tools: ${missing[*]}" >&2
         exit 1
@@ -385,7 +381,7 @@ require_tools
 "$SMOKE_DIR/freshness.sh" || echo "WARN: freshness check failed (see above); continuing" >&2
 
 echo "relay:   $(command -v "$RELAY")"
-echo "moq-cli: $(command -v "$MOQ")"
+echo "moq:     $(command -v "$MOQ")"
 
 if needs python; then
     echo "installing python client (moq-rs from PyPI)..."
@@ -569,7 +565,7 @@ ffmpeg_h264() {
 # Sets global PUB_PID. Called in the current shell (no command substitution) so
 # $! refers to the backgrounded job and kill_tree can reap the whole pipeline.
 # Every publisher just consumes the same ffmpeg Annex-B stream on stdin; the
-# client frames it (moq-cli / the FFI importers only frame-and-forward, ffmpeg
+# client frames it (moq / the FFI importers only frame-and-forward, ffmpeg
 # encodes).
 PUB_PID=""
 start_publisher() {
@@ -604,7 +600,7 @@ run_subscriber() {
     local lang="$1" broadcast="$2"
     case "$lang" in
         rust)
-            # moq-cli only handles SIGINT, so -k forces SIGKILL if it ignores the
+            # moq only handles SIGINT, so -k forces SIGKILL if it ignores the
             # SIGTERM that fires when no data arrives within the timeout.
             local n
             n=$(timeout -k 3 "$TIMEOUT" "$MOQ" subscribe --url "$URL" --broadcast "$broadcast" \

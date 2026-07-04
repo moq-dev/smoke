@@ -14,7 +14,7 @@ import { resolve } from "node:path";
 const pkgDir = resolve(process.cwd(), "node_modules/@moq/token");
 const pkg = JSON.parse(readFileSync(resolve(pkgDir, "package.json"), "utf8"));
 
-const bin = typeof pkg.bin === "string" ? pkg.bin : (pkg.bin?.["moq-token"] ?? pkg.bin?.["moq-token-cli"]);
+const bin = typeof pkg.bin === "string" ? pkg.bin : pkg.bin?.["moq-token"];
 if (!bin) {
 	console.error("@moq/token exposes no moq-token bin; published package changed shape");
 	process.exit(1);

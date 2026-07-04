@@ -22,8 +22,8 @@
         devShells.default = pkgs.mkShell {
           # smoke.sh installs the clients from public registries; this shell only
           # provides the toolchains those installs need. The Rust binaries under
-          # test (moq-relay, moq-cli) come from a channel (cargo/brew/apt), not
-          # from here, though `cargo` is included so `cargo install moq-cli` works.
+          # test (moq-relay, moq) come from a channel (cargo/brew/apt), not from
+          # here, though `cargo` is included so `cargo install moq-cli` works.
           packages = with pkgs; [
             # orchestrator + harness tools
             just

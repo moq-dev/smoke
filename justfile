@@ -3,7 +3,7 @@
 # Using Just: https://github.com/casey/just?tab=readme-ov-file#installation
 #
 # Convenience wrapper around smoke.sh. The clients install themselves from public
-# registries on each run; you bring moq-relay + moq-cli on PATH (cargo/brew/apt).
+# registries on each run; you bring moq-relay + moq on PATH (cargo/brew/apt).
 
 # Run the smoke matrix (default: rust only). Pass flags through, e.g.
 #   just smoke --publishers rust,python,js-vite --subscribers rust,python,js-jsdelivr
@@ -21,7 +21,7 @@ full:
     ./smoke.sh --publishers rust,python,js-vite,js-esbuild,js-jsdelivr --subscribers rust,python,go,swift,kotlin,c,c-pkgconfig,c-cmake,gst,js-vite,js-esbuild,js-jsdelivr,js-native-node,js-native-bun --timeout 30
 
 # Token interop: install moq-token in each published flavour and cross-verify.
-# The Rust moq-token-cli comes from a channel (PATH); @moq/token comes from npm,
+# The Rust moq-token binary comes from a channel (PATH); @moq/token comes from npm,
 # driven under both node and bun. Default: rust only. Pass flags through, e.g.
 #   just token --generators rust,js-node --verifiers rust,js-bun --algorithms HS256
 token *args:
@@ -33,7 +33,7 @@ token *args:
 token-full:
     ./token.sh --generators rust,js-node,js-bun,rust-docker --verifiers rust,js-node,js-bun,rust-docker
 
-# The "nix" channel: get moq-relay + moq-cli from the moq flake itself
+# The "nix" channel: get moq-relay + moq from the moq flake itself
 # (a public distribution channel, `nix run github:moq-dev/moq#moq-cli`), instead
 # of cargo/brew/apt. Referenced ad-hoc with --refresh so the moq version is the
 # latest default-branch build, never locked by this repo. The devShell only
@@ -46,7 +46,7 @@ CACHIX_KEY := "kixelated.cachix.org-1:CmFcV0lyM6KuVM2m9mih0q4SrAa0XyCsiM7GHrz3KK
 nix-channel *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "building moq-relay + moq-cli from {{ MOQ_FLAKE }} (latest)..."
+    echo "building moq-relay + moq from {{ MOQ_FLAKE }} (latest)..."
     nix_build() {
         nix build --refresh --no-link --print-out-paths \
             --extra-substituters "{{ CACHIX_SUB }}" \
@@ -56,7 +56,7 @@ nix-channel *args:
     cli=$(nix_build '{{ MOQ_FLAKE }}#moq-cli')
     echo "relay: $relay"
     echo "cli:   $cli"
-    RELAY_BIN="$relay/bin/moq-relay" MOQ_BIN="$cli/bin/moq-cli" ./smoke.sh {{ args }}
+    RELAY_BIN="$relay/bin/moq-relay" MOQ_BIN="$cli/bin/moq" ./smoke.sh {{ args }}
 
 # Negative control: no publisher, every subscriber must time out.
 negative *args:
