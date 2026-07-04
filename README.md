@@ -117,9 +117,10 @@ published flavours, and this test proves they cross-verify:
 | `js-bun` | the same published npm package, run under **bun** | `npm i @moq/token` |
 | `rust-docker` | the [`moqdev/moq-token-cli`](https://hub.docker.com/r/moqdev/moq-token-cli) Docker Hub image (`:latest`) | `docker run moqdev/moq-token-cli …` |
 
-Like `smoke.sh`, the Rust binary is taken from `PATH` (or `TOKEN_BIN`), so the
-install channel is whatever put `moq-token` there; `@moq/token` is installed
-from npm on each run; `rust-docker` `docker pull`s the `moqdev/moq-token-cli`
+Like `smoke.sh`, the Rust binary is taken from `PATH` (or `TOKEN_BIN`), preferring
+`moq-token` and falling back to `moq-token-cli` while channels finish the rename;
+`@moq/token` is installed from npm on each run; `rust-docker` `docker pull`s the
+`moqdev/moq-token-cli`
 image fresh (`:latest`) and runs the CLI in a throwaway container with the scratch
 dir bind-mounted. The image is built `FROM nixos/nix` and ships the nix store, so
 it's a genuinely different artifact from the `cargo`/`brew`/`apt` binaries — and
