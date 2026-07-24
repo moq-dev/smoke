@@ -397,10 +397,13 @@ fi
 if needs go; then
     echo "building go client (moq-dev/moq-go from the module proxy)..."
     GO_SMOKE="$TMP/go-smoke"
-    # Pull the latest published module, then build the client against it.
+    # Pull the latest published module, then build the client against it. The
+    # ergonomic moq-go wrapper pulls a transitive moq-go-ffi; `go get moq-go`
+    # records only moq-go's own checksum, so `go mod tidy` fetches the rest (no
+    # go.sum is committed -- freshness bans lockfiles -- so it's regenerated here).
     if ! have go; then
         mark_broken go "go not found"
-    elif (cd "$CLIENTS/go" && go get "github.com/moq-dev/moq-go@latest" && CGO_ENABLED=1 go build -o "$GO_SMOKE" .) >"$TMP/go-build.log" 2>&1; then :; else
+    elif (cd "$CLIENTS/go" && go get "github.com/moq-dev/moq-go@latest" && go mod tidy && CGO_ENABLED=1 go build -o "$GO_SMOKE" .) >"$TMP/go-build.log" 2>&1; then :; else
         mark_broken go "go get/build of moq-dev/moq-go failed"
         sed 's/^/        /' "$TMP/go-build.log" >&2 || true
     fi
