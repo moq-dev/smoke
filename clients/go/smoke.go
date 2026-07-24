@@ -1,16 +1,20 @@
-// Cross-language interop client for the smoke test, built against the published
-// github.com/moq-dev/moq-go module (the raw uniffi-bindgen-go surface).
+// Cross-language interop client for the smoke test, built against the ergonomic
+// github.com/moq-dev/moq-go wrapper (package moq: Dial, CreateBroadcast,
+// PublishMediaStream, SubscribeMedia, range-over-func frame iterators). The raw
+// uniffi-bindgen-go surface lives in github.com/moq-dev/moq-go-ffi; this client
+// exercises the idiomatic wrapper a real Go user would reach for.
 //
-// publish:   read raw Annex-B H.264 from stdin (e.g. piped from ffmpeg) and feed
-//            it to a streaming importer, which infers frame boundaries.
-// subscribe: connect, find the video track in the catalog, and exit 0 as soon as
-//            any non-empty frame arrives (exit 1 on timeout / no data).
+// publish reads raw Annex-B H.264 from stdin (e.g. piped from ffmpeg) and feeds
+// it to a streaming importer, which infers frame boundaries. subscribe connects,
+// finds the video track in the catalog, and exits 0 as soon as any non-empty
+// frame arrives (exit 1 on timeout / no data). Usage:
 //
-//	ffmpeg ... -f h264 - | go-smoke publish   --url http://127.0.0.1:4443 --broadcast b.hang
-//	                       go-smoke subscribe --url http://127.0.0.1:4443 --broadcast b.hang --timeout 20
+//	ffmpeg ... -f h264 - | go-smoke publish --url http://127.0.0.1:4443 --broadcast b.hang
+//	go-smoke subscribe --url http://127.0.0.1:4443 --broadcast b.hang --timeout 20
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -20,10 +24,7 @@ import (
 	"github.com/moq-dev/moq-go/moq"
 )
 
-const (
-	readChunk    = 64 * 1024
-	maxLatencyMs = 1000 // subscribe_media congestion-control / lookahead window
-)
+const readChunk = 64 * 1024
 
 func main() {
 	if len(os.Args) < 2 {
@@ -61,36 +62,28 @@ func main() {
 }
 
 func publish(url, broadcast string) error {
-	origin := moq.NewMoqOriginProducer()
-	defer origin.Destroy()
-
-	producer, err := moq.NewMoqBroadcastProducer()
+	// The relay uses a self-signed cert, so verification is off. With no origin
+	// options, Dial shares one origin for publish + consume.
+	client, err := moq.Dial(context.Background(), url, moq.WithTLSVerify(false))
 	if err != nil {
 		return err
 	}
-	defer producer.Destroy()
+	defer client.Close()
 
-	// avc3: a self-describing Annex-B H.264 stream the importer can frame on its own.
+	producer, err := client.CreateBroadcast(broadcast)
+	if err != nil {
+		return err
+	}
+	defer producer.Finish()
+
+	// avc3: a self-describing Annex-B H.264 stream the importer can frame on its
+	// own. PublishMediaStream feeds the raw byte stream; whole frames are emitted
+	// as they complete.
 	media, err := producer.PublishMediaStream("avc3")
 	if err != nil {
 		return err
 	}
-	defer media.Destroy()
-
-	if err := origin.Publish(broadcast, producer); err != nil {
-		return err
-	}
-
-	client := moq.NewMoqClient()
-	defer client.Destroy()
-	client.SetTlsDisableVerify(true)
-	client.SetPublish(&origin)
-
-	session, err := client.Connect(url)
-	if err != nil {
-		return err
-	}
-	defer session.Destroy()
+	defer media.Finish()
 
 	fmt.Fprintf(os.Stderr, "publishing %q (Annex-B H.264 from stdin) to %s\n", broadcast, url)
 
@@ -113,71 +106,45 @@ func publish(url, broadcast string) error {
 }
 
 func subscribe(url, broadcast string, timeoutS float64) error {
-	done := make(chan error, 1)
-	go func() { done <- subscribeInner(url, broadcast) }()
+	// The whole subscribe must complete within the timeout; a cancelled context
+	// aborts any in-flight wrapper call and unblocks the frame iterator.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutS*float64(time.Second)))
+	defer cancel()
 
-	select {
-	case err := <-done:
-		return err
-	case <-time.After(time.Duration(timeoutS * float64(time.Second))):
-		// The FFI calls below block; the process exit tears down the goroutine.
-		return fmt.Errorf("timed out waiting for data")
-	}
-}
-
-func subscribeInner(url, broadcast string) error {
-	origin := moq.NewMoqOriginProducer()
-	defer origin.Destroy()
-
-	client := moq.NewMoqClient()
-	defer client.Destroy()
-	client.SetTlsDisableVerify(true)
-	client.SetConsume(&origin)
-
-	session, err := client.Connect(url)
+	client, err := moq.Dial(ctx, url, moq.WithTLSVerify(false))
 	if err != nil {
 		return err
 	}
-	defer session.Destroy()
+	defer client.Close()
 
-	consumer := origin.Consume()
-	defer consumer.Destroy()
-
-	announced, err := consumer.AnnouncedBroadcast(broadcast)
+	announced, err := client.AnnouncedBroadcast(broadcast)
 	if err != nil {
 		return err
 	}
-	defer announced.Destroy()
+	defer announced.Cancel()
 
-	bc, err := announced.Available()
-	if err != nil {
-		return err
-	}
-	defer bc.Destroy()
-
-	name, video, err := videoTrack(bc)
+	bc, err := announced.Available(ctx)
 	if err != nil {
 		return err
 	}
 
-	media, err := bc.SubscribeMedia(name, video.Container, maxLatencyMs)
+	name, video, err := videoTrack(ctx, bc)
 	if err != nil {
 		return err
 	}
-	defer media.Destroy()
 
-	total := 0
-	for {
-		frame, err := media.Next()
+	media, err := bc.SubscribeMedia(name, video.Container, nil)
+	if err != nil {
+		return err
+	}
+	defer media.Cancel()
+
+	for frame, err := range media.Frames(ctx) {
 		if err != nil {
 			return err
 		}
-		if frame == nil {
-			break
-		}
-		total += len(frame.Payload)
-		if total > 0 {
-			fmt.Fprintf(os.Stderr, "received %d bytes from %q\n", total, broadcast)
+		if len(frame.Payload) > 0 {
+			fmt.Fprintf(os.Stderr, "received %d bytes from %q\n", len(frame.Payload), broadcast)
 			return nil
 		}
 	}
@@ -187,23 +154,20 @@ func subscribeInner(url, broadcast string) error {
 // videoTrack waits for a catalog update that actually carries a video track. A
 // lazy publisher (e.g. the browser, which only encodes on demand) may announce
 // video in a later update, not the first snapshot.
-func videoTrack(bc *moq.MoqBroadcastConsumer) (string, moq.MoqVideo, error) {
+func videoTrack(ctx context.Context, bc *moq.BroadcastConsumer) (string, moq.Video, error) {
 	cat, err := bc.SubscribeCatalog()
 	if err != nil {
-		return "", moq.MoqVideo{}, err
+		return "", moq.Video{}, err
 	}
-	defer cat.Destroy()
+	defer cat.Cancel()
 
-	for {
-		catalog, err := cat.Next()
+	for catalog, err := range cat.Updates(ctx) {
 		if err != nil {
-			return "", moq.MoqVideo{}, err
-		}
-		if catalog == nil {
-			return "", moq.MoqVideo{}, fmt.Errorf("catalog stream ended without a video track")
+			return "", moq.Video{}, err
 		}
 		for name, video := range catalog.Video {
 			return name, video, nil
 		}
 	}
+	return "", moq.Video{}, fmt.Errorf("catalog stream ended without a video track")
 }

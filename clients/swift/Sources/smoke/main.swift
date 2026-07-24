@@ -1,16 +1,15 @@
 // Subscribe-only cross-language interop client for the smoke test, built on the
-// published Swift package (moq-dev/moq-swift). Connect, find the video track in
-// the catalog, and exit 0 as soon as any non-empty frame arrives (1 on timeout).
+// ergonomic Swift API of the published moq-dev/moq-swift package (the `Moq`
+// module's Client/Session/BroadcastConsumer classes and AsyncSequence streams),
+// not the raw MoqFFI handles. Connect, find the video track in the catalog, and
+// exit 0 as soon as any non-empty frame arrives (1 on timeout).
 //
 //   smoke subscribe --url http://127.0.0.1:4443 --broadcast b.hang --timeout 20
 //
 // Publishing isn't wired up: the raw-stream importer the other clients publish
-// with isn't in the published 0.2.x FFI yet, so this client only subscribes.
+// with isn't exercised here, so this client only subscribes.
 import Foundation
 import Moq
-// The published Moq module re-exports the generated types via plain `import`
-// (not @_exported yet), so name them from MoqFFI directly.
-import MoqFFI
 
 enum SmokeError: Error { case timeout, noVideo, noData }
 
@@ -39,33 +38,32 @@ func parseArgs() -> Args {
 func warn(_ s: String) { FileHandle.standardError.write((s + "\n").data(using: .utf8)!) }
 
 // A catalog update that actually carries a video track. A lazy publisher may
-// announce video in a later update, not the first snapshot.
-func videoTrack(_ bc: MoqBroadcastConsumer) async throws -> (String, MoqVideo) {
-    let catalog = try bc.subscribeCatalog()
-    for try await update in catalog.updates {
+// announce video in a later update, not the first snapshot. CatalogConsumer is
+// an AsyncSequence of catalog snapshots.
+func videoTrack(_ bc: BroadcastConsumer) async throws -> (String, Video) {
+    for try await update in try await bc.subscribeCatalog() {
         if let first = update.video.first { return (first.key, first.value) }
     }
     throw SmokeError.noVideo
 }
 
 func subscribe(_ args: Args) async throws {
-    let origin = MoqOriginProducer()
-    let client = MoqClient()
-    client.setTlsDisableVerify(disable: true)
-    client.setConsume(origin: origin)
+    // The smoke relay uses a self-signed cert. connect(to:) wires an auto-created
+    // origin, so session.consumer discovers announcements without touching MoqFFI.
+    let client = Client()
+    client.setTlsVerify(false)
 
-    let session = try await client.connect(url: args.url)
-    defer { session.cancel(code: 0) } // code 0 = graceful close
+    let session = try await client.connect(to: args.url)
+    defer { session.shutdown() } // graceful close
 
-    let consumer = origin.consume()
-    let announced = try consumer.announcedBroadcast(path: args.broadcast)
+    let announced = try session.consumer.announcedBroadcast(path: args.broadcast)
     let bc = try await announced.available()
 
     let (name, video) = try await videoTrack(bc)
-    let media = try bc.subscribeMedia(name: name, container: video.container, maxLatencyMs: 1000)
+    let media = try await bc.subscribeMedia(name: name, container: video.container)
 
     var total = 0
-    for try await frame in media.frames {
+    for try await frame in media {
         total += frame.payload.count
         if total > 0 {
             warn("received \(total) bytes from \(args.broadcast)")
