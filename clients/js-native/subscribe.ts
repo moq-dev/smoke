@@ -53,7 +53,9 @@ async function run(): Promise<void> {
 			for (;;) {
 				const entry = await announced.next();
 				if (!entry) throw new Error("connection closed before broadcast was announced");
-				if (entry.active && Moq.Path.hasPrefix(path, entry.path)) break;
+				// Entry paths are relative to the prefix passed to announced() -- here
+				// the exact broadcast -- so any active entry is the one we asked for.
+				if (entry.active) break;
 			}
 		} finally {
 			announced.close();
@@ -61,20 +63,24 @@ async function run(): Promise<void> {
 
 		const bc = connection.consume(path);
 
-		// The .hang catalog lives on the "catalog.json" track. Catalog.Consumer
-		// reconstructs each catalog update from its snapshot+delta frames and
-		// validates it against RootSchema. A lazy publisher may announce video in a
-		// later update, so keep pulling updates until one carries a video track.
-		const catalog = new Catalog.Consumer(bc.subscribe("catalog.json", Catalog.PRIORITY.catalog));
+		// The .hang catalog lives on the Catalog.TRACK ("catalog.json") track, one
+		// JSON snapshot per frame validated against RootSchema. (@moq/hang 0.3.0
+		// dropped the Catalog.Consumer helper, so read the frames directly.) A lazy
+		// publisher may announce video in a later update, so keep pulling until one
+		// carries a video track.
+		const catalog = bc.subscribe(Catalog.TRACK, { priority: Catalog.PRIORITY.catalog });
 		let videoTrack: string | undefined;
 		while (!videoTrack) {
-			const root = await catalog.next();
-			if (!root) throw new Error("catalog ended without a video track");
+			const group = await catalog.recvGroup();
+			if (!group) throw new Error("catalog ended without a video track");
+			const frame = await group.readFrame();
+			if (!frame) continue;
+			const root = Catalog.RootSchema.parse(JSON.parse(new TextDecoder().decode(frame.payload)));
 			const renditions = root.video?.renditions;
 			if (renditions) videoTrack = Object.keys(renditions)[0];
 		}
 
-		const video = bc.subscribe(videoTrack, 0);
+		const video = bc.subscribe(videoTrack, { priority: 0 });
 		let total = 0;
 		for (;;) {
 			const group = await video.recvGroup();
@@ -82,7 +88,7 @@ async function run(): Promise<void> {
 			for (;;) {
 				const frame = await group.readFrame();
 				if (!frame) break;
-				total += frame.byteLength;
+				total += frame.payload.byteLength;
 				if (total > 0) {
 					console.error(`received ${total} bytes from ${broadcast}`);
 					return;
