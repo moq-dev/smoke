@@ -16,24 +16,16 @@ import sys
 import moq
 
 READ_CHUNK = 64 * 1024
-MAX_LATENCY_MS = 1_000  # subscribe_media congestion-control / lookahead window
 
 
 async def publish(url: str, broadcast: str) -> None:
-    producer = moq.BroadcastProducer()
-    if not hasattr(producer, "publish_media_stream"):
-        # The streaming importer (infers frame boundaries from a raw Annex-B
-        # pipe) is how every non-browser client publishes here. It's missing
-        # from this published wheel, so raw-stream publishing isn't available
-        # until a newer moq-rs ships. Subscribing still works.
-        raise RuntimeError(
-            "installed moq-rs has no BroadcastProducer.publish_media_stream; "
-            "raw-stream publishing needs a newer published wheel"
-        )
-    media = producer.publish_media_stream("avc3")
-
     async with moq.Client(url, tls_verify=False) as client:
-        client.publish(broadcast, producer)
+        # create_broadcast registers the broadcast and hands back its producer
+        # (the old client.publish(broadcast, producer) split was removed in the
+        # ergonomic moq-rs API). publish_media_stream feeds a raw Annex-B pipe to
+        # the streaming importer, which infers frame boundaries.
+        producer = client.create_broadcast(broadcast)
+        media = producer.publish_media_stream("avc3")
         print(f"publishing {broadcast!r} (Annex-B H.264 from stdin) to {url}")
 
         loop = asyncio.get_running_loop()
@@ -56,7 +48,8 @@ async def _catalog_with_video(consumer: moq.BroadcastConsumer) -> moq.Catalog:
     # The catalog is a live track. A lazy publisher (e.g. the browser, which only
     # encodes on demand) may announce video in a *later* update, not the first
     # snapshot, so wait for a catalog that actually has a video track.
-    async for catalog in consumer.subscribe_catalog():
+    catalog_consumer = await consumer.subscribe_catalog()
+    async for catalog in catalog_consumer:
         if catalog.video:
             return catalog
     raise RuntimeError("catalog stream ended without a video track")
@@ -64,13 +57,17 @@ async def _catalog_with_video(consumer: moq.BroadcastConsumer) -> moq.Catalog:
 
 async def subscribe(url: str, broadcast: str, timeout: float) -> None:
     async with moq.Client(url, tls_verify=False) as client:
-        consumer = await asyncio.wait_for(client.announced_broadcast(broadcast), timeout)
+        # announced_broadcast yields a handle; available() resolves it to a live
+        # consumer once the broadcast is announced. subscribe_catalog/_media are
+        # coroutines in the ergonomic API, so they're awaited (below and above).
+        announced = client.announced_broadcast(broadcast)
+        consumer = await asyncio.wait_for(announced.available(), timeout)
         catalog = await asyncio.wait_for(_catalog_with_video(consumer), timeout)
 
         track_name = next(iter(catalog.video))
         video = catalog.video[track_name]
 
-        media = consumer.subscribe_media(track_name, video.container, MAX_LATENCY_MS)
+        media = await consumer.subscribe_media(track_name, video.container)
 
         total = 0
 
