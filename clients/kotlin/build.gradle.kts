@@ -1,5 +1,5 @@
 plugins {
-    kotlin("jvm") version "2.0.21"
+    kotlin("jvm") version "2.4.10"
     application
 }
 
@@ -10,7 +10,7 @@ dependencies {
     // dependency lockfile is committed, and caches of dynamic versions are
     // disabled below, so each run re-resolves to the newest release.
     implementation("dev.moq:moq:latest.release")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
 }
 
 configurations.all {

@@ -1,12 +1,16 @@
 // Subscribe-only cross-language interop client for the smoke test, built on the
-// published Kotlin package (dev.moq:moq on Maven Central). Connect, find the
-// video track in the catalog, and exit 0 as soon as any non-empty frame arrives
-// (1 on timeout).
+// ergonomic Kotlin API of the published dev.moq:moq package (the `dev.moq.Moq`
+// connect facade + the `dev.moq` Flow extensions), not the raw uniffi.moq
+// handles. Connect, find the video track in the catalog, and exit 0 as soon as
+// any non-empty frame arrives (1 on timeout).
 //
 //   smoke subscribe --url http://127.0.0.1:4443 --broadcast b.hang --timeout 20
 //
 // Publishing isn't wired up: the raw-stream importer the other clients publish
-// with isn't in the published 0.2.x FFI yet, so this client only subscribes.
+// with isn't exercised here, so this client only subscribes.
+import dev.moq.BroadcastConsumer
+import dev.moq.Moq
+import dev.moq.Video
 import dev.moq.frames
 import dev.moq.updates
 import kotlinx.coroutines.TimeoutCancellationException
@@ -14,17 +18,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import uniffi.moq.MoqBroadcastConsumer
-import uniffi.moq.MoqClient
-import uniffi.moq.MoqOriginProducer
-import uniffi.moq.MoqVideo
 import kotlin.system.exitProcess
-
-private const val MAX_LATENCY_MS = 1_000uL
 
 // A catalog update that actually carries a video track. A lazy publisher may
 // announce video in a later update, not the first snapshot.
-private suspend fun videoTrack(bc: MoqBroadcastConsumer): Pair<String, MoqVideo> =
+private suspend fun videoTrack(bc: BroadcastConsumer): Pair<String, Video> =
     bc.subscribeCatalog().use { catalog ->
         catalog.updates()
             .mapNotNull { it.video.entries.firstOrNull() }
@@ -33,25 +31,18 @@ private suspend fun videoTrack(bc: MoqBroadcastConsumer): Pair<String, MoqVideo>
     }
 
 private suspend fun subscribe(url: String, broadcast: String) {
-    val origin = MoqOriginProducer()
-    val client = MoqClient()
-    client.setTlsDisableVerify(true)
-    client.setConsume(origin)
-
-    val session = client.connect(url)
-    try {
-        val consumer = origin.consume()
-        val announced = consumer.announcedBroadcast(broadcast)
+    // tlsVerify = false: the smoke relay uses a self-signed cert. `use` shuts the
+    // session down (graceful close) on the way out.
+    Moq.connect(url, tlsVerify = false).use { moq ->
+        val announced = moq.announcedBroadcast(broadcast)
         val bc = announced.available()
 
         val (name, video) = videoTrack(bc)
-        val media = bc.subscribeMedia(name, video.container, MAX_LATENCY_MS)
+        val media = bc.subscribeMedia(name, video.container, null)
 
         // Suspends until the first non-empty frame, or throws if the flow ends.
         val frame = media.frames().first { it.payload.isNotEmpty() }
         System.err.println("received ${frame.payload.size} bytes from $broadcast")
-    } finally {
-        session.cancel(0u) // code 0 = graceful close
     }
 }
 
