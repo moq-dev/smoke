@@ -84,9 +84,9 @@ try {
 		while (Date.now() < deadline) {
 			frames = await page.evaluate(() => {
 				const w = document.querySelector("moq-watch") as unknown as {
-					backend?: { video?: { stats?: { peek(): { frameCount?: number } | undefined } } };
+					video?: { out?: { stats?: { peek(): { frameCount?: number } | undefined } } };
 				} | null;
-				return w?.backend?.video?.stats?.peek()?.frameCount ?? 0;
+				return w?.video?.out?.stats?.peek()?.frameCount ?? 0;
 			});
 			if (frames > 0) break;
 			// The watch element gives up if it subscribes to the catalog before the
