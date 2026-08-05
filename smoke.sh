@@ -194,8 +194,10 @@ libmoq_fetch() {
             ;;
     esac
     case "$(uname -s)" in
-        Darwin) LIBMOQ_OS_LIBS="-framework CoreFoundation -framework Security" ;;
-        *) LIBMOQ_OS_LIBS="-lpthread -ldl -lm" ;;
+        Darwin) LIBMOQ_OS_LIBS="-framework CoreFoundation -framework Security -framework CoreServices -framework Foundation -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework VideoToolbox -framework ScreenCaptureKit -framework CoreGraphics -lc++" ;;
+        # No -lva: moq-vaapi dlopen's libva at runtime, so libmoq.a carries no
+        # libva symbols and a libva-less host just falls back to another encoder.
+        *) LIBMOQ_OS_LIBS="-lpthread -ldl -lm -lstdc++" ;;
     esac
     # Latest libmoq-v* release, never pinned. Authenticated if a token is around
     # (CI) to dodge the 60/hr anonymous GitHub API limit.

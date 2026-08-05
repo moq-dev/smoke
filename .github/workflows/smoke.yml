@@ -88,12 +88,19 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          # gcc (cc) for the C client is already on the runner.
+          # gcc (cc) for the C client is already on the runner, but g++ isn't:
+          # libmoq.a bundles openh264, so static consumers need libstdc++ to link.
+          # libva-dev is not a real dependency (moq-vaapi dlopen's libva and
+          # libmoq.a has no libva symbols); it's here only because libmoq's
+          # published moq.pc and CMake package still advertise -lva/-lva-drm, so
+          # the c-pkgconfig and c-cmake variants pass them to the linker. Drop it
+          # once a libmoq release ships without those. The hand-rolled `c` variant
+          # already omits them, see LIBMOQ_OS_LIBS in smoke.sh.
           # gstreamer1.0-* provides gst-launch/gst-inspect + the core elements
           # (filesink) the moq-gst subscriber loads the prebuilt plugin against.
           # pkg-config + cmake drive the c-pkgconfig / c-cmake build variants
           # (they consume the prebuilt libmoq's moq.pc and lib/cmake/moq package).
-          sudo apt-get install -y ffmpeg curl procps coreutils jq pkg-config cmake \
+          sudo apt-get install -y ffmpeg curl procps coreutils jq pkg-config cmake g++ libva-dev \
             gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good
 
       - name: System deps (macOS)
