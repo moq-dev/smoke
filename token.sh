@@ -153,7 +153,7 @@ cli_for() {
         # Mount TMP at its real path so the in-container CLI reads/writes the same
         # key/token files token.sh hands it. The image bundles the nix store, so
         # the binary's libiconv deps resolve (the brew bottle's bug doesn't apply).
-        rust-docker) echo "$DOCKER run --rm -v $TMP:$TMP -w $TMP $DOCKER_TOKEN_IMAGE" ;;
+        rust-docker) echo "$DOCKER run --rm --user $(id -u):$(id -g) -v $TMP:$TMP -w $TMP $DOCKER_TOKEN_IMAGE" ;;
         js-node) echo "node $CLI_NODE" ;;
         js-bun) echo "bun $CLI_BUN" ;;
         *) return 1 ;;
@@ -238,7 +238,7 @@ if needs rust; then
     # and aborts on launch) is exactly the packaging failure this test exists to
     # catch. A broken CLI marks the whole rust row unavailable instead of crashing
     # mid-matrix.
-    elif "$TOKEN" generate --algorithm HS256 --out /dev/null >"$TMP/rust-probe.log" 2>&1; then
+    elif "$TOKEN" generate --algorithm HS256 --out "$TMP/rust-probe.jwk" >"$TMP/rust-probe.log" 2>&1; then
         echo "rust:    $(command -v "$TOKEN")"
     else
         mark_broken rust "$TOKEN on PATH but won't run (see below)"
@@ -254,7 +254,8 @@ if needs rust-docker; then
     # Pull :latest fresh (the published-package equivalent of the other channels'
     # always-latest install), then run it once to confirm the image works.
     elif "$DOCKER" pull "$DOCKER_TOKEN_IMAGE" >"$TMP/docker-pull.log" 2>&1 &&
-        "$DOCKER" run --rm "$DOCKER_TOKEN_IMAGE" generate --algorithm HS256 --out /dev/null >"$TMP/docker-probe.log" 2>&1; then
+        "$DOCKER" run --rm --user "$(id -u):$(id -g)" -v "$TMP:$TMP" -w "$TMP" \
+            "$DOCKER_TOKEN_IMAGE" generate --algorithm HS256 --out "$TMP/docker-probe.jwk" >"$TMP/docker-probe.log" 2>&1; then
         echo "rust-docker: $DOCKER_TOKEN_IMAGE (latest, via $DOCKER)"
     else
         mark_broken rust-docker "$DOCKER pull/run $DOCKER_TOKEN_IMAGE failed (see below)"
