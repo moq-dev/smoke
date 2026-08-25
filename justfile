@@ -20,6 +20,11 @@ smoke *args:
 full:
     ./smoke.sh --publishers rust,python,js-vite,js-esbuild,js-jsdelivr --subscribers rust,python,go,swift,kotlin,c,c-pkgconfig,c-cmake,gst,js-vite,js-esbuild,js-jsdelivr,js-native-node,js-native-bun --timeout 30
 
+# Build both Rust implementations from their latest default branches. Drive
+# both relays with the Cloudflare client over WebTransport and raw QUIC.
+cloudflare:
+    ./cloudflare.sh
+
 # Token interop: install moq-token in each published flavour and cross-verify.
 # The Rust moq-token binary comes from a channel (PATH); @moq/token comes from npm,
 # driven under both node and bun. Default: rust only. Pass flags through, e.g.
@@ -76,3 +81,9 @@ check:
     @if command -v shellcheck >/dev/null 2>&1 && command -v shfmt >/dev/null 2>&1; then shellcheck $(shfmt -f .); else echo "shellcheck: skipped"; fi
     @command -v actionlint >/dev/null && actionlint || echo "actionlint: skipped"
     just freshness
+
+# Compile-check and unit-test the local integrity client against the current
+# cloudflare/moq-rs Git dependencies. The end-to-end relay check is `just cloudflare`.
+cloudflare-check:
+    cargo update --manifest-path clients/cloudflare/Cargo.toml
+    cargo test --manifest-path clients/cloudflare/Cargo.toml

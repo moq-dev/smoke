@@ -234,3 +234,18 @@ jobs:
             if [ "$RUNNER_OS" = "Linux" ]; then impls="$impls,rust-docker"; fi
           fi
           ./token.sh --generators "$impls" --verifiers "$impls"
+
+  cloudflare:
+    name: Cloudflare interoperability
+    runs-on: ubuntu-latest
+    # Both projects are built from Git HEAD; the six runtime checks are quick.
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Cloudflare interoperability
+        run: ./cloudflare.sh

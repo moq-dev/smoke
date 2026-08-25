@@ -9,6 +9,7 @@ clients/go/bin/
 clients/swift/.build/
 clients/kotlin/.gradle/
 clients/kotlin/build/
+clients/cloudflare/target/
 *.log
 
 # No committed PACKAGE lock files: every run must re-resolve the moq packages

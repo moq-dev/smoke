@@ -30,6 +30,7 @@
             git
             ffmpeg
             curl
+            openssl # throwaway localhost certificate for cloudflare.sh
             jq
             coreutils # GNU `timeout` (macOS lacks it)
             procps # `pgrep`

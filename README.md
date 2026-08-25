@@ -1,6 +1,6 @@
 # moq smoke
 
-Cross-language interop smoke test for the **public** [Media over QUIC](https://github.com/moq-dev/moq) packages.
+Cross-language interop smoke test for the **public** [Media over QUIC](https://github.com/moq-dev/moq) packages, plus source-head interoperability coverage between [`moq-dev/moq`](https://github.com/moq-dev/moq) and [Cloudflare's `moq-rs`](https://github.com/cloudflare/moq-rs).
 
 The [moq-dev/moq](https://github.com/moq-dev/moq) monorepo has its own in-tree smoke test, but it builds every client from workspace source. That proves the code in the tree works; it does **not** prove a real user can install the published artifacts and have them talk to each other. A missing wheel, a stale Homebrew formula, a broken `.deb`, an export that didn't survive packaging, a Go module missing its header. none of that shows up until someone installs from a registry.
 
@@ -25,6 +25,8 @@ We check that bytes move across implementations, not that H.264 decodes.
 | Kotlin | Maven Central [`dev.moq:moq`](https://central.sonatype.com/artifact/dev.moq/moq) | `gradle` (JVM) |
 | C | [`libmoq`](https://github.com/moq-dev/moq/releases) prebuilt release assets | `cc` + the platform tarball |
 | GStreamer | [`moq-gst`](https://github.com/moq-dev/moq/releases?q=moq-gst) prebuilt plugin (apt `gstreamer1.0-moq` / brew tap / rpm / tarball) | `gst-launch-1.0` + the platform tarball, against a **system** GStreamer |
+
+Cloudflare's fork is tested separately because it uses a different media catalog and track layout, so putting its fMP4 tools into the Hang media matrix would create application-format failures rather than transport interop coverage. [`cloudflare.sh`](cloudflare.sh) builds both projects' relays from their latest default branches (honoring each checkout's committed Rust dependency lock), then drives them with a purpose-built Cloudflare client over WebTransport and raw QUIC. Against both relays it validates 32 complete 64 KiB subgroup objects (2 MiB total) byte-for-byte; against Cloudflare's relay it also validates 32 complete QUIC datagrams per transport. This is deliberately stronger than a setup-only or single-object protocol probe.
 
 The **Native JS** client runs the JS packages *outside* a browser, where there's no native WebTransport, using moq's own `@moq/web-transport` polyfill (a prebuilt NAPI QUIC/HTTP3 addon). It runs as two cells, `js-native-node` and `js-native-bun`, to catch runtime-specific breakage. Subscribe only here too: publishing media needs a WebCodecs encoder, which a native JS runtime lacks (reading raw container frames doesn't).
 
@@ -53,6 +55,8 @@ nix develop                       # drops you in a shell with the toolchain
 # then either bring the binaries via a channel...
 cargo install moq-relay moq-cli   # installs moq-relay + moq (or brew / apt)
 just full                         # full matrix, --timeout 30
+# Cloudflare client/relay self-test + Cloudflare client against moq-dev relay:
+just cloudflare
 # ...or use the moq flake as the channel (builds moq, no install needed):
 just nix-channel --publishers rust,js-vite --subscribers rust,python,js-jsdelivr --timeout 30
 ```
@@ -84,6 +88,7 @@ RELAY_BIN=/path/to/moq-relay MOQ_BIN=/path/to/moq ./smoke.sh
 
 ```
 smoke.sh                 orchestrator: relay + media interop matrix
+cloudflare.sh            orchestrator: Cloudflare client through both projects' relays
 smoke.toml               relay config (anonymous, self-signed localhost)
 token.sh                 orchestrator: moq-token generate/verify interop matrix
 clients/
@@ -98,6 +103,7 @@ clients/
   (gst)                   subscribe via the moq-gst plugin (moqsrc); no client dir, driven by gst-launch
   docker/                 moq-relay + moq wrappers: docker run the moqdev/* images (the docker channel)
   token/js/              installs @moq/token (npm) for token.sh to drive under node + bun
+  cloudflare/             deterministic subgroup/datagram client using cloudflare/moq-rs Git HEAD
 freshness.sh             enforces the "always latest, no package locks" policy
 .github/workflows/smoke.yml   nightly + on-demand CI matrix (os x channel)
 ```
@@ -151,7 +157,7 @@ just token-full       # full matrix: rust, js-node, js-bun + rust-docker (the
 
 ## Always the latest moq packages (no package lock files)
 
-To test what a user gets today, this repo commits **no package lock files** (`go.sum`, `bun.lock`, `Cargo.lock`, `uv.lock`, ... are gitignored). Every run re-resolves the moq packages to their latest published versions: `@moq/*` at the `latest` npm tag, `moq-rs` via `uv pip install`, `moq-go` via `go get @latest`, and the **nix** channel builds the moq flake ad-hoc with `--refresh`.
+To test what a user gets today, this repo commits **no package lock files** (`go.sum`, `bun.lock`, `Cargo.lock`, `uv.lock`, ... are gitignored). Every run re-resolves the moq packages to their latest published versions: `@moq/*` at the `latest` npm tag, `moq-rs` via `uv pip install`, `moq-go` via `go get @latest`, and the **nix** channel builds the moq flake ad-hoc with `--refresh`. The Cloudflare suite similarly resolves both `cloudflare/moq-rs` and `moq-dev/moq` from their unpinned Git default branches.
 
 `flake.lock` *is* committed: it pins the dev **toolchain** (nixpkgs), not the moq packages, so the shell is reproducible. The moq flake is never an input here, so locking the toolchain never locks moq.
 
@@ -176,5 +182,6 @@ This test tracks the **latest published** packages, so it sometimes runs ahead o
 - **GStreamer subscribe** (`gst`): working. The first `moq-gst` releases have now shipped (latest `moq-gst-v0.2.7`, with apt/brew/rpm/tarball + nix artifacts), so the cell resolves the newest tag and downloads the prebuilt plugin instead of reporting "no moq-gst-v\* release found". The published plugin load-checks green — `gst-inspect-1.0 moq` exposes `moqsrc`/`moqsink` against a system GStreamer (verified locally against the 0.2.7 tarball) — and `moqsrc` reads a rust-published H.264 broadcast end-to-end.
 - **Token interop** (`token.sh`): working on **cargo / apt / nix** plus the **`moqdev/moq-token-cli` Docker image** (Linux). The published `moq-token` binary (from crates.io / apt / nix / Docker Hub) and `@moq/token` (npm, under both node and bun) cross-verify every token across `HS256`, `EdDSA`, `ES256`, and `RS256`, and each verifier rejects tampered tokens and the wrong key. The Docker cell (`rust-docker`) proves the image — built `FROM nixos/nix`, so it carries the libiconv the brew bottle used to leak — runs cleanly. Subscriber-only languages don't ship token tooling yet, so the matrix is rust (binary + Docker) + the two JS runtimes for now.
 - **Token interop on the Homebrew bottle** (`rust` cells, macOS `brew`): working. The `moq-dev/tap/moq-token-cli` package's `moq-token` binary used to abort on launch — it baked in a `/nix/store/…-libiconv/lib/libiconv.2.dylib` rpath from the build sandbox that doesn't exist on a user's Mac (`dyld: Library not loaded`). The 0.5.31 bottle fixes it: its only `LC_RPATH` is now `/usr/lib`, so `@rpath/libiconv.2.dylib` resolves to the system libiconv and the binary runs (verified locally — `generate --algorithm HS256` succeeds, no leaked `/nix/store` rpath). `token.sh` still probes the binary once at startup, so a relapse would be caught again. Exactly the break-then-fix this repo exists to surface.
+- **Cloudflare interoperability**: the Cloudflare client publishes and subscribes over WebTransport and raw QUIC through both `cloudflare/moq-rs`'s `moq-relay-ietf` and `moq-dev/moq`'s `moq-relay`, with sustained subgroup payloads checked byte-for-byte. Cloudflare's relay additionally exercises datagrams in both directions. This is a source-head smoke test, so a later upstream commit can intentionally turn it red.
 
 A broken published package fails only its own matrix cells (see `mark_broken` in `smoke.sh` / `token.sh`); it never aborts the rest of the run.
