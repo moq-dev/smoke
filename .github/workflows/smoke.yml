@@ -117,7 +117,10 @@ jobs:
       # ── Rust binaries, per channel (left on PATH for smoke.sh) ──────────
       - name: Install moq Rust packages (cargo)
         if: matrix.channel == 'cargo'
-        run: cargo install moq-relay moq-cli moq-token-cli
+        # Honor each published binary crate's Cargo.lock. Without --locked, the
+        # cargo channel can select a newly broken transitive dependency even when
+        # the crate was published and tested against a working resolution.
+        run: cargo install --locked moq-relay moq-cli moq-token-cli
 
       - name: Install moq Rust packages (apt)
         if: matrix.channel == 'apt'
