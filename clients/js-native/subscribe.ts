@@ -38,8 +38,18 @@ if (role !== "subscribe" || !url || !broadcast) {
 	process.exit(2);
 }
 
+const abort = new AbortController();
+let activeConnection: Awaited<ReturnType<typeof Moq.Connection.connect>> | undefined;
+
+function closeActiveConnection(): void {
+	const connection = activeConnection;
+	activeConnection = undefined;
+	connection?.close(); // returns void, not a promise
+}
+
 async function run(): Promise<void> {
-	const connection = await Moq.Connection.connect(new URL(url as string));
+	const connection = await Moq.Connection.connect(new URL(url as string), { signal: abort.signal });
+	activeConnection = connection;
 	try {
 		const path = Moq.Path.from(broadcast as string);
 
@@ -97,18 +107,27 @@ async function run(): Promise<void> {
 		}
 		throw new Error("no frame data received");
 	} finally {
-		connection.close(); // returns void, not a promise
+		if (activeConnection === connection) closeActiveConnection();
 	}
 }
 
-const timeout = new Promise<never>((_, reject) =>
-	setTimeout(() => reject(new Error("timed out waiting for data")), timeoutMs),
-);
+let timeoutId: ReturnType<typeof setTimeout> | undefined;
+const timeout = new Promise<never>((_, reject) => {
+	timeoutId = setTimeout(() => {
+		const err = new Error("timed out waiting for data");
+		abort.abort(err);
+		closeActiveConnection();
+		reject(err);
+	}, timeoutMs);
+});
 
+// Let pending napi-rs cleanup finish instead of forcing environment teardown
+// while native reads may still be releasing references.
 try {
 	await Promise.race([run(), timeout]);
-	process.exit(0);
 } catch (err) {
 	console.error(`error: ${err instanceof Error ? err.message : String(err)}`);
-	process.exit(1);
+	process.exitCode = 1;
+} finally {
+	if (timeoutId !== undefined) clearTimeout(timeoutId);
 }

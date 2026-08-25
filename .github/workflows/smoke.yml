@@ -72,11 +72,6 @@ jobs:
         with:
           go-version: stable
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          # Bun 1.4.0 intermittently aborts while @moq/web-transport releases a
-          # napi reference after successfully receiving media. Keep the blocking
-          # matrix on the last known-good runtime; bun-latest below tracks the fix.
-          bun-version: "1.3.14"
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: "22"
@@ -239,44 +234,3 @@ jobs:
             if [ "$RUNNER_OS" = "Linux" ]; then impls="$impls,rust-docker"; fi
           fi
           ./token.sh --generators "$impls" --verifiers "$impls"
-
-  # Keep visibility into Bun's current release without making an upstream
-  # runtime regression suppress the blocking matrix's negative and token checks.
-  # This is intentionally one small Docker-backed path rather than another full
-  # channel cell: the failure is in the native Bun subscriber's napi teardown,
-  # not in a relay distribution channel.
-  bun-latest:
-    name: ubuntu-latest / bun-latest (canary)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    continue-on-error: true
-    env:
-      GITHUB_TOKEN: ${{ github.token }}
-      RELAY_BIN: ${{ github.workspace }}/clients/docker/moq-relay
-      MOQ_BIN: ${{ github.workspace }}/clients/docker/moq
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          persist-credentials: false
-
-      # No bun-version: this canary deliberately follows the latest release.
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-
-      - name: System deps
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg curl procps coreutils
-
-      - name: Pull moqdev images
-        run: |
-          docker pull moqdev/moq-relay
-          docker pull moqdev/moq-cli
-
-      - name: Native Bun canary
-        # Exercise multiple process teardowns because the Bun 1.4.0 napi failure
-        # is intermittent and happens after the subscriber has received data.
-        run: |
-          for attempt in {1..5}; do
-            echo "attempt $attempt/5"
-            ./smoke.sh --publishers rust --subscribers js-native-bun --timeout 30
-          done
