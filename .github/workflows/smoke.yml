@@ -238,6 +238,8 @@ jobs:
   cloudflare:
     name: Cloudflare interoperability
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     # Both projects are built from Git HEAD; the six runtime checks are quick.
     timeout-minutes: 45
 

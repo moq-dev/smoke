@@ -206,7 +206,10 @@ async fn subscribe(
     let receive = receive(track_reader, args.delivery, args.object_size, objects);
     let accept_namespaces = accept_namespaces(subscriber.clone());
     tokio::select! {
-        res = session.run() => res.context("subscriber session failed"),
+        res = session.run() => {
+            res.context("subscriber session failed")?;
+            bail!("subscriber session ended before validation completed")
+        },
         res = subscriber.subscribe(track_writer) => {
             res.context("subscription ended before validation completed")?;
             bail!("subscription ended before validation completed")

@@ -151,7 +151,7 @@ start_relay() {
     RELAY_PID=$!
 
     for _ in $(seq 1 60); do
-        curl -ksf "$ready" >/dev/null 2>&1 && return
+        curl --cacert "$TMP/localhost.crt" -sf "$ready" >/dev/null 2>&1 && return
         kill -0 "$RELAY_PID" 2>/dev/null || break
         sleep 0.5
     done
