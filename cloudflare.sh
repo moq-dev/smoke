@@ -182,23 +182,24 @@ run_round() {
     PUB_PID=$!
 
     # Both relays reject an unknown namespace instead of holding an early
-    # subscription. Leave enough headroom for a cold process to complete SETUP
-    # and PUBLISH_NAMESPACE before the client opens its first group.
-    sleep 2
-    if ! kill -0 "$PUB_PID" 2>/dev/null; then
-        echo "  FAIL  $name (publisher exited before subscription)"
-        sed 's/^/        publisher: /' "$TMP/pub-${implementation}-${transport}-${delivery}.log" >&2 || true
-        sed 's/^/        relay: /' "$TMP/relay-$implementation.log" >&2 || true
-        wait "$PUB_PID" 2>/dev/null || true
-        PUB_PID=""
-        overall=1
-        return
-    fi
+    # subscription. Retry quick rejections while the publisher completes SETUP
+    # and PUBLISH_NAMESPACE; once accepted, the same process stays connected and
+    # validates the payload. A broken or hanging subscription still times out.
+    local subscribe_deadline=$((SECONDS + 10)) subscribe_ok=0
+    while true; do
+        if timeout -k 3 "$TIMEOUT" "$CLIENT" --url "$url" --namespace "$namespace" \
+            --tls-disable-verify --tls-root "$TMP/localhost.crt" \
+            --delivery "$delivery" --object-size "$object_size" \
+            subscribe --objects "$objects" >"$TMP/sub-${implementation}-${transport}-${delivery}.log" 2>&1; then
+            subscribe_ok=1
+            break
+        fi
+        kill -0 "$PUB_PID" 2>/dev/null || break
+        ((SECONDS >= subscribe_deadline)) && break
+        sleep 0.25
+    done
 
-    if timeout -k 3 "$TIMEOUT" "$CLIENT" --url "$url" --namespace "$namespace" \
-        --tls-disable-verify --tls-root "$TMP/localhost.crt" \
-        --delivery "$delivery" --object-size "$object_size" \
-        subscribe --objects "$objects" >"$TMP/sub-${implementation}-${transport}-${delivery}.log" 2>&1; then
+    if [[ "$subscribe_ok" -eq 1 ]]; then
         echo "  PASS  $name"
         sed 's/^/        /' "$TMP/sub-${implementation}-${transport}-${delivery}.log"
     else
