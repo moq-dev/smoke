@@ -182,24 +182,36 @@ run_round() {
     PUB_PID=$!
 
     # Both relays reject an unknown namespace instead of holding an early
-    # subscription. Retry quick rejections while the publisher completes SETUP
-    # and PUBLISH_NAMESPACE; once accepted, the same process stays connected and
-    # validates the payload. A broken or hanging subscription still times out.
-    local subscribe_deadline=$((SECONDS + 10)) subscribe_ok=0
+    # subscription. Probe until PUBLISH_NAMESPACE is accepted; exit 75 is the
+    # client's specific unknown-namespace signal, while every other error fails
+    # immediately. Payload validation then runs exactly once and cannot be masked.
+    local subscribe_deadline=$((SECONDS + 10)) probe_ok=0 probe_status
     while true; do
-        if timeout -k 3 "$TIMEOUT" "$CLIENT" --url "$url" --namespace "$namespace" \
+        if timeout -k 1 10 "$CLIENT" --url "$url" --namespace "$namespace" \
             --tls-disable-verify --tls-root "$TMP/localhost.crt" \
             --delivery "$delivery" --object-size "$object_size" \
-            subscribe --objects "$objects" >"$TMP/sub-${implementation}-${transport}-${delivery}.log" 2>&1; then
-            subscribe_ok=1
+            probe >"$TMP/probe-${implementation}-${transport}-${delivery}.log" 2>&1; then
+            probe_ok=1
             break
+        else
+            probe_status=$?
         fi
+        [[ "$probe_status" -eq 75 ]] || break
         kill -0 "$PUB_PID" 2>/dev/null || break
         ((SECONDS >= subscribe_deadline)) && break
         sleep 0.25
     done
 
-    if [[ "$subscribe_ok" -eq 1 ]]; then
+    if [[ "$probe_ok" -ne 1 ]]; then
+        echo "  FAIL  $name (namespace publication was not accepted)"
+        sed 's/^/        publisher: /' "$TMP/pub-${implementation}-${transport}-${delivery}.log" >&2 || true
+        sed 's/^/        probe: /' "$TMP/probe-${implementation}-${transport}-${delivery}.log" >&2 || true
+        sed 's/^/        relay: /' "$TMP/relay-$implementation.log" >&2 || true
+        overall=1
+    elif timeout -k 3 "$TIMEOUT" "$CLIENT" --url "$url" --namespace "$namespace" \
+        --tls-disable-verify --tls-root "$TMP/localhost.crt" \
+        --delivery "$delivery" --object-size "$object_size" \
+        subscribe --objects "$objects" >"$TMP/sub-${implementation}-${transport}-${delivery}.log" 2>&1; then
         echo "  PASS  $name"
         sed 's/^/        /' "$TMP/sub-${implementation}-${transport}-${delivery}.log"
     else

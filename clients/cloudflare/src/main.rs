@@ -1,15 +1,17 @@
 use std::collections::HashSet;
 use std::net;
 use std::path::PathBuf;
+use std::process::ExitCode;
 use std::time::Duration;
 
 use anyhow::{bail, Context};
 use bytes::Bytes;
 use clap::{Parser, Subcommand, ValueEnum};
 use moq_native_ietf::quic;
+use moq_transport::message::RequestErrorCode;
 use moq_transport::{
     coding::TrackNamespace,
-    serve::{Datagram, Track, TrackReader, TrackReaderMode, Tracks},
+    serve::{Datagram, ServeError, Track, TrackReader, TrackReaderMode, Tracks},
     session::{Publisher, Subscriber},
 };
 use url::Url;
@@ -74,6 +76,8 @@ enum Delivery {
 enum Command {
     /// Publish deterministic objects until the orchestrator stops the process.
     Publish,
+    /// Exit 0 once the relay accepts the subscription, or 75 while its namespace is unknown.
+    Probe,
     /// Subscribe and validate the requested number of complete objects.
     Subscribe {
         #[arg(long, default_value_t = 32)]
@@ -81,8 +85,13 @@ enum Command {
     },
 }
 
+enum Outcome {
+    Complete,
+    NamespaceUnavailable,
+}
+
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> ExitCode {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -90,6 +99,17 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    match run().await {
+        Ok(Outcome::Complete) => ExitCode::SUCCESS,
+        Ok(Outcome::NamespaceUnavailable) => ExitCode::from(75),
+        Err(err) => {
+            eprintln!("{err:#}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run() -> anyhow::Result<Outcome> {
     let args = Args::parse();
     anyhow::ensure!(
         args.object_size >= HEADER_SIZE,
@@ -113,8 +133,13 @@ async fn main() -> anyhow::Result<()> {
     let (session, _, transport) = endpoint.client.connect(&args.url, None).await?;
 
     match args.command {
-        Command::Publish => publish(args, session, transport).await,
-        Command::Subscribe { objects } => subscribe(args, objects, session, transport).await,
+        Command::Publish => publish(args, session, transport)
+            .await
+            .map(|_| Outcome::Complete),
+        Command::Probe => probe(args, session, transport).await,
+        Command::Subscribe { objects } => subscribe(args, objects, session, transport)
+            .await
+            .map(|_| Outcome::Complete),
     }
 }
 
@@ -219,6 +244,43 @@ async fn subscribe(
     }
 }
 
+async fn probe(
+    args: Args,
+    session: web_transport::Session,
+    transport: moq_transport::session::Transport,
+) -> anyhow::Result<Outcome> {
+    let (session, mut subscriber) = Subscriber::connect(session, transport)
+        .await
+        .context("probe SETUP failed")?;
+    let namespace = TrackNamespace::from_utf8_path(&args.namespace);
+    let (track_writer, _) = Track::new(namespace, args.track).produce();
+    let accept_namespaces = accept_namespaces(subscriber.clone());
+
+    tokio::select! {
+        res = session.run() => {
+            res.context("probe session failed")?;
+            bail!("probe session ended before subscription acceptance")
+        },
+        res = subscriber.subscribe_open(track_writer) => match res {
+            Ok(_subscription) => {
+                println!("subscription accepted");
+                Ok(Outcome::Complete)
+            },
+            Err(ServeError::NotFound | ServeError::NotFoundWithId(_, _)) => {
+                Ok(Outcome::NamespaceUnavailable)
+            },
+            Err(ServeError::Closed(code)) if code == RequestErrorCode::DoesNotExist as u64 => {
+                Ok(Outcome::NamespaceUnavailable)
+            },
+            Err(err) => Err(err).context("probe subscription failed"),
+        },
+        res = accept_namespaces => {
+            res?;
+            bail!("probe namespace acceptance loop ended")
+        },
+    }
+}
+
 async fn accept_namespaces(mut subscriber: Subscriber) -> anyhow::Result<()> {
     let mut active = Vec::new();
     loop {
@@ -310,9 +372,7 @@ fn validate(payload: &[u8], expected_size: usize) -> anyhow::Result<u64> {
 }
 
 fn pattern(sequence: u64, offset: usize) -> u8 {
-    sequence
-        .wrapping_mul(31)
-        .wrapping_add((offset as u64).wrapping_mul(17)) as u8
+    sequence.to_be_bytes()[offset % 8] ^ (offset as u8).wrapping_mul(17)
 }
 
 #[cfg(test)]
@@ -329,6 +389,13 @@ mod tests {
     fn corruption_is_rejected() {
         let mut payload = payload(7, 900).to_vec();
         payload[100] ^= 1;
+        assert!(validate(&payload, 900).is_err());
+    }
+
+    #[test]
+    fn sequence_header_corruption_is_rejected() {
+        let mut payload = payload(7, 900).to_vec();
+        payload[8] ^= 1;
         assert!(validate(&payload, 900).is_err());
     }
 }
