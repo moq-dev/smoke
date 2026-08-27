@@ -88,6 +88,25 @@ else
     note FAIL "smoke.sh no longer go-gets moq-go @latest"
     fail=1
 fi
+# Both relays and the local integrity client deliberately follow their
+# repositories' default branches. A rev/tag/branch would silently turn this
+# into a stale snapshot rather than a Git-head smoke test.
+# shellcheck disable=SC2016  # the grep checks for the literal variable reference in cloudflare.sh
+if grep -q 'git = "https://github.com/cloudflare/moq-rs"' clients/cloudflare/Cargo.toml &&
+    ! grep -qE '(^|[,{[:space:]])(rev|tag|branch)[[:space:]]*=' clients/cloudflare/Cargo.toml &&
+    grep -q 'cargo install --quiet --locked --git "$CLOUDFLARE_MOQ_REPO"' cloudflare.sh; then
+    note ok "cloudflare/moq-rs -> unpinned Git default branch"
+else
+    note FAIL "cloudflare/moq-rs is no longer resolved from the unpinned Git default branch"
+    fail=1
+fi
+# shellcheck disable=SC2016  # the grep checks for the literal variable reference in cloudflare.sh
+if grep -q 'cargo install --quiet --locked --git "$MOQ_REPO"' cloudflare.sh; then
+    note ok "moq-dev/moq relay -> unpinned Git default branch"
+else
+    note FAIL "moq-dev/moq relay is no longer resolved from the unpinned Git default branch"
+    fail=1
+fi
 # Swift: `from: "x"` floats to the newest compatible; an `.exact(` pin would not.
 if grep -q '\.exact(' clients/swift/Package.swift; then
     note FAIL "moq-swift pinned with .exact( (want from:, which floats to latest)"
