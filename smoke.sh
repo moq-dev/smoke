@@ -294,7 +294,7 @@ c_build_cmake() {
 # needs. (Local nix shells have no GStreamer, and a prebuilt plugin wouldn't link
 # against nixpkgs' gst anyway, so this cell wants a real system gst install.)
 gst_prepare() {
-    local target tag ver url root hdr=()
+    local target tag asset_name url root releases hdr=()
     have gst-launch-1.0 || {
         echo "gst-launch-1.0 not on PATH (apt install gstreamer1.0-tools / brew install gstreamer)" >&2
         return 1
@@ -343,21 +343,42 @@ gst_prepare() {
     # Latest moq-gst-v* release, never pinned. Authenticated if a token is around
     # (CI) to dodge the 60/hr anonymous GitHub API limit.
     [[ -n "${GITHUB_TOKEN:-}" ]] && hdr=(-H "Authorization: Bearer $GITHUB_TOKEN")
-    tag=$(curl -sf ${hdr[@]+"${hdr[@]}"} "https://api.github.com/repos/moq-dev/moq/releases?per_page=100" |
-        jq -r '.[].tag_name' | grep '^moq-gst-v' | head -1)
+    releases="$TMP/moq-gst-releases.json"
+    curl -sf ${hdr[@]+"${hdr[@]}"} \
+        "https://api.github.com/repos/moq-dev/moq/releases?per_page=100" -o "$releases" || {
+        echo "failed to query moq-gst releases" >&2
+        return 1
+    }
+    tag=$(jq -r '.[].tag_name' "$releases" | grep '^moq-gst-v' | head -1)
     [[ -n "$tag" ]] || {
         echo "no moq-gst-v* release found" >&2
         return 1
     }
-    ver=${tag#moq-gst-v}
-    url="https://github.com/moq-dev/moq/releases/download/$tag/moq-gst-$ver-$target.tar.gz"
+    # Release asset names are part of the release metadata, not a derivation of
+    # the crate version. In particular, 0.3.7 added the tag's `v` to the archive
+    # and extracted-directory name. Select the platform asset that was actually
+    # published so future naming changes fail as a missing asset, not a guessed URL.
+    asset_name=$(jq -r --arg tag "$tag" --arg suffix "-$target.tar.gz" \
+        '.[] | select(.tag_name == $tag) | .assets[].name |
+        select(startswith("moq-gst-") and endswith($suffix))' "$releases" | head -1)
+    [[ -n "$asset_name" ]] || {
+        echo "no moq-gst asset for $target in release $tag" >&2
+        return 1
+    }
+    url=$(jq -r --arg tag "$tag" --arg name "$asset_name" \
+        '.[] | select(.tag_name == $tag) | .assets[] |
+        select(.name == $name) | .browser_download_url' "$releases" | head -1)
+    [[ -n "$url" ]] || {
+        echo "moq-gst asset has no download URL: $asset_name" >&2
+        return 1
+    }
     echo "moq-gst $tag ($target)"
     mkdir -p "$TMP/moq-gst"
     curl -sfL "$url" | tar xz -C "$TMP/moq-gst" || {
         echo "download/extract failed: $url" >&2
         return 1
     }
-    root="$TMP/moq-gst/moq-gst-$ver-$target"
+    root="$TMP/moq-gst/${asset_name%.tar.gz}"
     GST_PLUGIN_DIR="$root/lib/gstreamer-1.0"
     [[ -d "$GST_PLUGIN_DIR" ]] || {
         echo "plugin dir missing in tarball: $GST_PLUGIN_DIR" >&2
@@ -613,7 +634,8 @@ run_subscriber() {
             [[ "${n:-0}" -ge 1 ]]
             ;;
         python)
-            "$PY" "$CLIENTS/python/smoke.py" \
+            # Keep a Rust backtrace in CI if the published FFI ever aborts again.
+            RUST_BACKTRACE="${RUST_BACKTRACE:-1}" "$PY" "$CLIENTS/python/smoke.py" \
                 subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
             ;;
         go)

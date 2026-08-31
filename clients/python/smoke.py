@@ -48,10 +48,13 @@ async def _catalog_with_video(consumer: moq.BroadcastConsumer) -> moq.Catalog:
     # The catalog is a live track. A lazy publisher (e.g. the browser, which only
     # encodes on demand) may announce video in a *later* update, not the first
     # snapshot, so wait for a catalog that actually has a video track.
-    catalog_consumer = await consumer.subscribe_catalog()
-    async for catalog in catalog_consumer:
-        if catalog.video:
-            return catalog
+    # These live consumers are async context managers. Cancel them explicitly
+    # before the parent client shuts down; otherwise an in-flight FFI task can
+    # race teardown after this helper returns from the async iterator.
+    async with await consumer.subscribe_catalog() as catalog_consumer:
+        async for catalog in catalog_consumer:
+            if catalog.video:
+                return catalog
     raise RuntimeError("catalog stream ended without a video track")
 
 
@@ -60,25 +63,24 @@ async def subscribe(url: str, broadcast: str, timeout: float) -> None:
         # announced_broadcast yields a handle; available() resolves it to a live
         # consumer once the broadcast is announced. subscribe_catalog/_media are
         # coroutines in the ergonomic API, so they're awaited (below and above).
-        announced = client.announced_broadcast(broadcast)
-        consumer = await asyncio.wait_for(announced.available(), timeout)
+        async with client.announced_broadcast(broadcast) as announced:
+            consumer = await asyncio.wait_for(announced.available(), timeout)
         catalog = await asyncio.wait_for(_catalog_with_video(consumer), timeout)
 
         track_name = next(iter(catalog.video))
         video = catalog.video[track_name]
 
-        media = await consumer.subscribe_media(track_name, video.container)
-
         total = 0
+        async with await consumer.subscribe_media(track_name, video.container) as media:
 
-        async def drain() -> None:
-            nonlocal total
-            async for frame in media:
-                total += len(frame.payload)
-                if total > 0:
-                    return
+            async def drain() -> None:
+                nonlocal total
+                async for frame in media:
+                    total += len(frame.payload)
+                    if total > 0:
+                        return
 
-        await asyncio.wait_for(drain(), timeout)
+            await asyncio.wait_for(drain(), timeout)
 
     if total <= 0:
         raise RuntimeError("no frame data received")
