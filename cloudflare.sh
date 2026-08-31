@@ -183,11 +183,14 @@ run_round() {
 
     # Both relays reject an unknown namespace instead of holding an early
     # subscription. Probe until PUBLISH_NAMESPACE is accepted; exit 75 is the
-    # client's specific unknown-namespace signal, while every other error fails
-    # immediately. Payload validation then runs exactly once and cannot be masked.
+    # client's specific unknown-namespace signal. A probe can also remain pending
+    # while publication is settling, so bound each attempt to two seconds and
+    # retry timeout(1)'s exit 124 within the outer deadline. Every semantic error
+    # still fails immediately. Payload validation then runs exactly once and
+    # cannot be masked.
     local subscribe_deadline=$((SECONDS + 10)) probe_ok=0 probe_status
     while true; do
-        if timeout -k 1 10 "$CLIENT" --url "$url" --namespace "$namespace" \
+        if timeout -k 1 2 "$CLIENT" --url "$url" --namespace "$namespace" \
             --tls-disable-verify --tls-root "$TMP/localhost.crt" \
             --delivery "$delivery" --object-size "$object_size" \
             probe >"$TMP/probe-${implementation}-${transport}-${delivery}.log" 2>&1; then
@@ -196,14 +199,14 @@ run_round() {
         else
             probe_status=$?
         fi
-        [[ "$probe_status" -eq 75 ]] || break
+        [[ "$probe_status" -eq 75 || "$probe_status" -eq 124 ]] || break
         kill -0 "$PUB_PID" 2>/dev/null || break
         ((SECONDS >= subscribe_deadline)) && break
         sleep 0.25
     done
 
     if [[ "$probe_ok" -ne 1 ]]; then
-        echo "  FAIL  $name (namespace publication was not accepted)"
+        echo "  FAIL  $name (namespace publication was not accepted; probe exit $probe_status)"
         sed 's/^/        publisher: /' "$TMP/pub-${implementation}-${transport}-${delivery}.log" >&2 || true
         sed 's/^/        probe: /' "$TMP/probe-${implementation}-${transport}-${delivery}.log" >&2 || true
         sed 's/^/        relay: /' "$TMP/relay-$implementation.log" >&2 || true
