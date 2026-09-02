@@ -251,3 +251,26 @@ jobs:
 
       - name: Cloudflare interoperability
         run: ./cloudflare.sh
+
+  moxygen:
+    name: Moxygen interoperability
+    runs-on: ubuntu-latest
+    # Current moq-dev HEAD negotiates successfully but fails moxygen's
+    # announce-subscribe case. Keep the full diagnostic running without making
+    # every unrelated PR red; remove this once that protocol mismatch is fixed.
+    continue-on-error: true
+    permissions:
+      contents: read
+      packages: read
+    # The published client image and moq-dev relay both follow Git HEAD. Building
+    # the Rust relay is the long pole; the 12 protocol cases are bounded and quick.
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Moxygen interoperability
+        run: ./moxygen.sh

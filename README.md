@@ -1,6 +1,6 @@
 # moq smoke
 
-Cross-language interop smoke test for the **public** [Media over QUIC](https://github.com/moq-dev/moq) packages, plus source-head interoperability coverage between [`moq-dev/moq`](https://github.com/moq-dev/moq) and [Cloudflare's `moq-rs`](https://github.com/cloudflare/moq-rs).
+Cross-language interop smoke test for the **public** [Media over QUIC](https://github.com/moq-dev/moq) packages, plus source-head interoperability coverage with [Cloudflare's `moq-rs`](https://github.com/cloudflare/moq-rs) and Meta's [`moxygen`](https://github.com/facebookexperimental/moxygen).
 
 The [moq-dev/moq](https://github.com/moq-dev/moq) monorepo has its own in-tree smoke test, but it builds every client from workspace source. That proves the code in the tree works; it does **not** prove a real user can install the published artifacts and have them talk to each other. A missing wheel, a stale Homebrew formula, a broken `.deb`, an export that didn't survive packaging, a Go module missing its header. none of that shows up until someone installs from a registry.
 
@@ -27,6 +27,8 @@ We check that bytes move across implementations, not that H.264 decodes.
 | GStreamer | [`moq-gst`](https://github.com/moq-dev/moq/releases?q=moq-gst) prebuilt plugin (apt `gstreamer1.0-moq` / brew tap / rpm / tarball) | `gst-launch-1.0` + the platform tarball, against a **system** GStreamer |
 
 Cloudflare's fork is tested separately because it uses a different media catalog and track layout, so putting its fMP4 tools into the Hang media matrix would create application-format failures rather than transport interop coverage. [`cloudflare.sh`](cloudflare.sh) builds both projects' relays from their latest default branches (honoring each checkout's committed Rust dependency lock), then drives them with a purpose-built Cloudflare client over WebTransport and raw QUIC. Against both relays it validates 32 complete 64 KiB subgroup objects (2 MiB total) byte-for-byte; against Cloudflare's relay it also validates 32 complete QUIC datagrams per transport. This is deliberately stronger than a setup-only or single-object protocol probe.
+
+Meta's moxygen is also tested separately from the Hang media matrix because its media samples use MoQ Media Interop packaging. [`moxygen.sh`](moxygen.sh) pulls moxygen's source-head `moxygen-interop-client` image and runs all six of its self-contained relay cases through the latest `moq-dev/moq` relay over WebTransport and raw QUIC: setup, namespace publication and withdrawal, expected subscription failure, announced publish/subscribe routing, and subscribe-before-announce behavior. The lane deliberately negotiates draft-16, which moxygen currently recommends for new integrations while its draft-18 support remains experimental. The published image is Linux/amd64 and the test uses Docker host networking, so this lane runs on Linux CI rather than in the package-channel matrix.
 
 The **Native JS** client runs the JS packages *outside* a browser, where there's no native WebTransport, using moq's own `@moq/web-transport` polyfill (a prebuilt NAPI QUIC/HTTP3 addon). It runs as two cells, `js-native-node` and `js-native-bun`, to catch runtime-specific breakage. Subscribe only here too: publishing media needs a WebCodecs encoder, which a native JS runtime lacks (reading raw container frames doesn't).
 
@@ -57,6 +59,8 @@ cargo install moq-relay moq-cli   # installs moq-relay + moq (or brew / apt)
 just full                         # full matrix, --timeout 30
 # Cloudflare client/relay self-test + Cloudflare client against moq-dev relay:
 just cloudflare
+# Moxygen's protocol interop client against the moq-dev relay (Linux Docker):
+just moxygen
 # ...or use the moq flake as the channel (builds moq, no install needed):
 just nix-channel --publishers rust,js-vite --subscribers rust,python,js-jsdelivr --timeout 30
 ```
@@ -89,6 +93,7 @@ RELAY_BIN=/path/to/moq-relay MOQ_BIN=/path/to/moq ./smoke.sh
 ```
 smoke.sh                 orchestrator: relay + media interop matrix
 cloudflare.sh            orchestrator: Cloudflare client through both projects' relays
+moxygen.sh               orchestrator: moxygen protocol client through the moq-dev relay
 smoke.toml               relay config (anonymous, self-signed localhost)
 token.sh                 orchestrator: moq-token generate/verify interop matrix
 clients/
@@ -183,5 +188,6 @@ This test tracks the **latest published** packages, so it sometimes runs ahead o
 - **Token interop** (`token.sh`): working on **cargo / apt / nix** plus the **`moqdev/moq-token-cli` Docker image** (Linux). The published `moq-token` binary (from crates.io / apt / nix / Docker Hub) and `@moq/token` (npm, under both node and bun) cross-verify every token across `HS256`, `EdDSA`, `ES256`, and `RS256`, and each verifier rejects tampered tokens and the wrong key. The Docker cell (`rust-docker`) proves the image — built `FROM nixos/nix`, so it carries the libiconv the brew bottle used to leak — runs cleanly. Subscriber-only languages don't ship token tooling yet, so the matrix is rust (binary + Docker) + the two JS runtimes for now.
 - **Token interop on the Homebrew bottle** (`rust` cells, macOS `brew`): working. The `moq-dev/tap/moq-token-cli` package's `moq-token` binary used to abort on launch — it baked in a `/nix/store/…-libiconv/lib/libiconv.2.dylib` rpath from the build sandbox that doesn't exist on a user's Mac (`dyld: Library not loaded`). The 0.5.31 bottle fixes it: its only `LC_RPATH` is now `/usr/lib`, so `@rpath/libiconv.2.dylib` resolves to the system libiconv and the binary runs (verified locally — `generate --algorithm HS256` succeeds, no leaked `/nix/store` rpath). `token.sh` still probes the binary once at startup, so a relapse would be caught again. Exactly the break-then-fix this repo exists to surface.
 - **Cloudflare interoperability**: the Cloudflare client publishes and subscribes over WebTransport and raw QUIC through both `cloudflare/moq-rs`'s `moq-relay-ietf` and `moq-dev/moq`'s `moq-relay`, with sustained subgroup payloads checked byte-for-byte. Cloudflare's relay additionally exercises datagrams in both directions. This is a source-head smoke test, so a later upstream commit can intentionally turn it red.
+- **Moxygen interoperability**: currently **red**. Moxygen's published source-head interop client negotiates draft-16 and passes 5/6 relay scenarios through `moq-dev/moq`, but `announce-subscribe` closes the subscriber session instead of routing it to the announced publisher. The failure reproduces over WebTransport and raw QUIC with the published relay, and over WebTransport with current moq-dev HEAD. CI runs the full Linux/amd64 Docker lane as non-blocking diagnostic coverage until the mismatch is fixed; `just moxygen` still exits nonzero locally.
 
 A broken published package fails only its own matrix cells (see `mark_broken` in `smoke.sh` / `token.sh`); it never aborts the rest of the run.

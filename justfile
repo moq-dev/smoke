@@ -25,6 +25,11 @@ full:
 cloudflare:
     ./cloudflare.sh
 
+# Run moxygen's published protocol interop client through the latest moq-dev
+# relay over WebTransport and raw QUIC. Linux Docker is required.
+moxygen:
+    ./moxygen.sh
+
 # Token interop: install moq-token in each published flavour and cross-verify.
 # The Rust moq-token binary comes from a channel (PATH); @moq/token comes from npm,
 # driven under both node and bun. Default: rust only. Pass flags through, e.g.
