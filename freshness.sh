@@ -107,6 +107,24 @@ else
     note FAIL "moq-dev/moq relay is no longer resolved from the unpinned Git default branch"
     fail=1
 fi
+# Moxygen publishes its source-head interop client as an amd64 image. Keep the
+# moving tag and pull it on every run; the wire draft is pinned separately for
+# deliberate protocol compatibility.
+# shellcheck disable=SC2016  # the grep checks for literal variable references in moxygen.sh
+if grep -qF 'ghcr.io/facebookexperimental/moxygen-interop-client:latest-amd64}' moxygen.sh &&
+    grep -qF '"$DOCKER" pull --platform linux/amd64 "$MOXYGEN_IMAGE"' moxygen.sh; then
+    note ok "facebookexperimental/moxygen interop client -> latest-amd64 (pulled each run)"
+else
+    note FAIL "moxygen.sh no longer pulls the latest source-head interop client image"
+    fail=1
+fi
+# shellcheck disable=SC2016  # the grep checks for the literal variable reference in moxygen.sh
+if grep -q 'cargo install --quiet --locked --git "$MOQ_REPO"' moxygen.sh; then
+    note ok "moxygen lane moq-dev/moq relay -> unpinned Git default branch"
+else
+    note FAIL "moxygen lane no longer resolves moq-dev/moq from the unpinned Git default branch"
+    fail=1
+fi
 # Swift: `from: "x"` floats to the newest compatible; an `.exact(` pin would not.
 if grep -q '\.exact(' clients/swift/Package.swift; then
     note FAIL "moq-swift pinned with .exact( (want from:, which floats to latest)"
