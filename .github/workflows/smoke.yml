@@ -255,10 +255,6 @@ jobs:
   moxygen:
     name: Moxygen interoperability
     runs-on: ubuntu-latest
-    # Current moq-dev HEAD negotiates successfully but fails moxygen's
-    # announce-subscribe case. Keep the full diagnostic running without making
-    # every unrelated PR red; remove this once that protocol mismatch is fixed.
-    continue-on-error: true
     permissions:
       contents: read
       packages: read
@@ -273,4 +269,8 @@ jobs:
           persist-credentials: false
 
       - name: Moxygen interoperability
+        # Current moq-dev HEAD negotiates successfully but fails moxygen's
+        # announce-subscribe case. Keep the full diagnostic visible without
+        # failing the job; remove this once that protocol mismatch is fixed.
+        continue-on-error: true
         run: ./moxygen.sh
