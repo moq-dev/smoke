@@ -139,6 +139,15 @@ else
     note FAIL "dev.moq:moq is not a dynamic latest version in build.gradle.kts"
     fail=1
 fi
+# From-dev consumes a moq checkout, not npm/crates.io latest. The published
+# matrix above stays on latest; this channel is what proves unpublished `dev`.
+# shellcheck disable=SC2016
+if grep -q 'ln -sfn "$MOQ_SRC/js/$pkg"' dev.sh && grep -q 'MOQ_REF:-dev}' dev.sh; then
+    note ok "from-dev JS packages -> MOQ_SRC/js (git ref default: dev)"
+else
+    note FAIL "dev.sh no longer installs unpublished JS packages from a moq checkout"
+    fail=1
+fi
 # C: smoke.sh resolves the newest libmoq-v* release, never a fixed version.
 if grep -q "grep '\^libmoq-v' | head -1" smoke.sh; then
     note ok "libmoq -> latest release"
