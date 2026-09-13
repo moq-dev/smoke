@@ -72,6 +72,13 @@ nix-channel *args:
 negative *args:
     ./smoke.sh --negative {{ args }}
 
+# Unpublished *dev* API: install JS packages from a moq checkout (path or git
+# `dev`) and run the contract cases. The published-package matrix is unchanged.
+#   just dev --src /path/to/moq
+#   just dev                 # clones github.com/moq-dev/moq (dev)
+dev *args:
+    ./dev.sh {{ args }}
+
 # Assert we pin nothing stale: no committed lock files, and any version we are
 # forced to pin (npm playwright) matches what the toolchain provides.
 freshness:

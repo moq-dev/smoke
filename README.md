@@ -4,7 +4,7 @@ Cross-language interop smoke test for the **public** [Media over QUIC](https://g
 
 The [moq-dev/moq](https://github.com/moq-dev/moq) monorepo has its own in-tree smoke test, but it builds every client from workspace source. That proves the code in the tree works; it does **not** prove a real user can install the published artifacts and have them talk to each other. A missing wheel, a stale Homebrew formula, a broken `.deb`, an export that didn't survive packaging, a Go module missing its header. none of that shows up until someone installs from a registry.
 
-This repo installs each client straight from its public package registry, stands up a relay, and runs the interop matrix:
+This repo installs each client straight from its public package registry, stands up a relay, and runs the interop matrix. A second **from-dev** channel (`./dev.sh`) installs the unpublished `dev` surface from a moq checkout (path or git `dev`) and runs contract cases the published matrix cannot see yet: reconnecting `Connection` handles, announcements, credential refresh, publication replacement, catalog snapshots-then-deltas, and stats Snapshot versus Window. Embedded relay ownership stays in moq-relay; it is not a smoke client.
 
 - A relay (`moq-relay`) routes broadcasts.
 - For each publisher language, publish an H.264 broadcast.
@@ -84,14 +84,21 @@ RELAY_BIN=/path/to/moq-relay MOQ_BIN=/path/to/moq ./smoke.sh
 
 # prove the harness can fail: no publisher, every subscriber must time out.
 ./smoke.sh --negative --subscribers rust,python
+
+# unpublished dev API (JS packages + relay from a moq checkout, not npm/crates.io):
+just dev --src /path/to/moq
+just dev                 # clones github.com/moq-dev/moq (dev)
 ```
 
 `smoke.sh` installs the language clients (PyPI / Go proxy / npm) into a scratch dir on each run, so you always test the latest published versions. It does **not** install the Rust binaries; that is the channel under test.
 
+`dev.sh` is the other way around: it builds `moq-relay` from `MOQ_SRC` (or clones `dev`) and resolves `@moq/net`, `@moq/hang`, and `@moq/json` from that checkout's `js/` tree so the contract cases exercise the unpublished surface.
+
 ## Layout
 
 ```
-smoke.sh                 orchestrator: relay + media interop matrix
+smoke.sh                 orchestrator: relay + media interop matrix (published packages)
+dev.sh                   orchestrator: unpublished dev API contract cases (path/git `dev`)
 cloudflare.sh            orchestrator: Cloudflare client through both projects' relays
 moxygen.sh               orchestrator: moxygen protocol client through the moq-dev relay
 smoke.toml               relay config (anonymous, self-signed localhost)
@@ -105,6 +112,7 @@ clients/
   kotlin/                 subscribe via dev.moq:moq (Gradle/JVM)
   c/subscribe.c          subscribe via libmoq (prebuilt release)
   js-native/subscribe.ts subscribe via @moq/net + @moq/hang + WebTransport polyfill (node, bun)
+  dev/                   from-dev contract cases: Connection, catalog Snapshot, stats Snapshot vs Window
   (gst)                   subscribe via the moq-gst plugin (moqsrc); no client dir, driven by gst-launch
   docker/                 moq-relay + moq wrappers: docker run the moqdev/* images (the docker channel)
   token/js/              installs @moq/token (npm) for token.sh to drive under node + bun
