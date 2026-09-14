@@ -140,6 +140,36 @@ trap cleanup EXIT
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# Run a command up to N times with a short growing backoff. For fetches from
+# registries/proxies that fail transiently (sum.golang.org stream resets, etc.);
+# without it one blip marks a client broken and fails its whole column.
+retry() {
+    local n="$1" i
+    shift
+    for ((i = 1; i <= n; i++)); do
+        "$@" && return 0
+        [[ $i -lt $n ]] && sleep $((i * 2))
+    done
+    return 1
+}
+
+# Download a release tarball to a file and extract it into a directory. Two
+# deliberate choices: curl retries every failure (--retry alone skips partial
+# transfers, and a truncated body is exactly the failure GitHub's CDN produces),
+# and the archive lands on disk before tar sees it, so a short read can't leave a
+# half-extracted tree behind while `tar xz` reports only "unexpected end of file".
+fetch_tarball() {
+    local url="$1" dir="$2"
+    local archive="$dir/.download.tar.gz"
+    mkdir -p "$dir"
+    if ! curl -sfL --retry 5 --retry-delay 2 --retry-all-errors -o "$archive" "$url" ||
+        ! tar xzf "$archive" -C "$dir"; then
+        echo "download/extract failed: $url" >&2
+        return 1
+    fi
+    rm -f "$archive"
+}
+
 require_tools() {
     # Resolve the CLI binary name unless MOQ_BIN pinned it.
     if [[ -z "$MOQ" ]]; then
@@ -204,7 +234,7 @@ libmoq_fetch() {
     [[ -n "${GITHUB_TOKEN:-}" ]] && hdr=(-H "Authorization: Bearer $GITHUB_TOKEN")
     # macOS ships bash 3.2, where "${hdr[@]}" on an empty array trips `set -u`;
     # the ${arr[@]+...} guard expands to nothing when the array is unset/empty.
-    tag=$(curl -sf ${hdr[@]+"${hdr[@]}"} "https://api.github.com/repos/moq-dev/moq/releases?per_page=100" |
+    tag=$(curl -sf --retry 3 --retry-all-errors ${hdr[@]+"${hdr[@]}"} "https://api.github.com/repos/moq-dev/moq/releases?per_page=100" |
         jq -r '.[].tag_name' | grep '^libmoq-v' | head -1)
     [[ -n "$tag" ]] || {
         echo "no libmoq-v* release found" >&2
@@ -213,11 +243,7 @@ libmoq_fetch() {
     ver=${tag#libmoq-v}
     url="https://github.com/moq-dev/moq/releases/download/$tag/moq-$ver-$target.tar.gz"
     echo "libmoq $tag ($target)"
-    mkdir -p "$TMP/libmoq"
-    curl -sfL "$url" | tar xz -C "$TMP/libmoq" || {
-        echo "download/extract failed: $url" >&2
-        return 1
-    }
+    fetch_tarball "$url" "$TMP/libmoq" || return 1
     LIBMOQ_ROOT="$TMP/libmoq/moq-$ver-$target"
 }
 
@@ -344,7 +370,7 @@ gst_prepare() {
     # (CI) to dodge the 60/hr anonymous GitHub API limit.
     [[ -n "${GITHUB_TOKEN:-}" ]] && hdr=(-H "Authorization: Bearer $GITHUB_TOKEN")
     releases="$TMP/moq-gst-releases.json"
-    curl -sf ${hdr[@]+"${hdr[@]}"} \
+    curl -sf --retry 3 --retry-all-errors ${hdr[@]+"${hdr[@]}"} \
         "https://api.github.com/repos/moq-dev/moq/releases?per_page=100" -o "$releases" || {
         echo "failed to query moq-gst releases" >&2
         return 1
@@ -373,11 +399,7 @@ gst_prepare() {
         return 1
     }
     echo "moq-gst $tag ($target)"
-    mkdir -p "$TMP/moq-gst"
-    curl -sfL "$url" | tar xz -C "$TMP/moq-gst" || {
-        echo "download/extract failed: $url" >&2
-        return 1
-    }
+    fetch_tarball "$url" "$TMP/moq-gst" || return 1
     root="$TMP/moq-gst/${asset_name%.tar.gz}"
     GST_PLUGIN_DIR="$root/lib/gstreamer-1.0"
     [[ -d "$GST_PLUGIN_DIR" ]] || {
@@ -424,9 +446,13 @@ if needs go; then
     # ergonomic moq-go wrapper pulls a transitive moq-go-ffi; `go get moq-go`
     # records only moq-go's own checksum, so `go mod tidy` fetches the rest (no
     # go.sum is committed -- freshness bans lockfiles -- so it's regenerated here).
+    # The module proxy / sum.golang.org occasionally reset mid-stream; retry the
+    # fetch (idempotent) and build only once it succeeds.
+    # shellcheck disable=SC2329  # invoked via retry
+    go_fetch() (cd "$CLIENTS/go" && go get "github.com/moq-dev/moq-go@latest" && go mod tidy)
     if ! have go; then
         mark_broken go "go not found"
-    elif (cd "$CLIENTS/go" && go get "github.com/moq-dev/moq-go@latest" && go mod tidy && CGO_ENABLED=1 go build -o "$GO_SMOKE" .) >"$TMP/go-build.log" 2>&1; then :; else
+    elif (retry 3 go_fetch && cd "$CLIENTS/go" && CGO_ENABLED=1 go build -o "$GO_SMOKE" .) >"$TMP/go-build.log" 2>&1; then :; else
         mark_broken go "go get/build of moq-dev/moq-go failed"
         sed 's/^/        /' "$TMP/go-build.log" >&2 || true
     fi
