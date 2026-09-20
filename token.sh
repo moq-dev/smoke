@@ -119,6 +119,8 @@ have() { command -v "$1" >/dev/null 2>&1; }
 resolve_token() {
     # Prefer the renamed binary, but tolerate channels that still expose the old
     # executable during rollout. TOKEN_BIN remains authoritative when set.
+    # Post-#3793 the token CLI is `moq auth` (subcommand of the media CLI);
+    # TOKEN_SUBCMD carries that subcommand when TOKEN resolves to the `moq` binary.
     [[ -n "$TOKEN" ]] && return 0
     if have moq-token; then
         TOKEN=moq-token
@@ -127,6 +129,16 @@ resolve_token() {
     else
         TOKEN=moq-token
     fi
+}
+
+# Extra subcommand inserted between the Rust binary and its verb, e.g. `auth`
+# for the post-#3793 `moq auth generate|sign|verify`. Empty for the standalone
+# moq-token binaries. Derived from TOKEN (or TOKEN_BIN) once it is known.
+token_subcmd() {
+    case "$(basename "${TOKEN%% *}")" in
+        moq) echo "auth" ;;
+        *) echo "" ;;
+    esac
 }
 
 # ── per-implementation adapters ──────────────────────────────────────────────
@@ -149,7 +161,7 @@ cli_for() {
     # split is deliberate (runtime + path, or a whole `docker run ...` line), so
     # callers expand it unquoted.
     case "$1" in
-        rust) echo "$TOKEN" ;;
+        rust) echo "$TOKEN $(token_subcmd)" ;;
         # Mount TMP at its real path so the in-container CLI reads/writes the same
         # key/token files token.sh hands it. The image bundles the nix store, so
         # the binary's libiconv deps resolve (the brew bottle's bug doesn't apply).
@@ -180,7 +192,18 @@ gen() {
             fi
             ;;
         js-node | js-bun)
-            if [[ "$algo" == HS* ]]; then
+            # Post-#3793 @moq/auth uses --out like the Rust CLI; the published
+            # @moq/token used --key. MOQ_SRC selects the source (new) shape.
+            if [[ -n "${MOQ_SRC:-}" ]]; then
+                if [[ "$algo" == HS* ]]; then
+                    # shellcheck disable=SC2086
+                    $cli generate --out "$dir/sign.jwk" --algorithm "$algo" >/dev/null
+                    cp "$dir/sign.jwk" "$dir/verify.jwk"
+                else
+                    # shellcheck disable=SC2086
+                    $cli generate --out "$dir/sign.jwk" --algorithm "$algo" --public "$dir/verify.jwk" >/dev/null
+                fi
+            elif [[ "$algo" == HS* ]]; then
                 # shellcheck disable=SC2086
                 $cli generate --key "$dir/sign.jwk" --algorithm "$algo" >/dev/null
                 cp "$dir/sign.jwk" "$dir/verify.jwk"
@@ -230,6 +253,13 @@ verify() {
 "$SMOKE_DIR/freshness.sh" || echo "WARN: freshness check failed (see above); continuing" >&2
 resolve_token
 
+rust_probe() {
+    # Probe the Rust token CLI once. Post-#3793 TOKEN may be `moq` with an
+    # `auth` subcommand, so the subcommand word-split is deliberate.
+    # shellcheck disable=SC2086,SC2046
+    $TOKEN $(token_subcmd) generate --algorithm HS256 --out "$TMP/rust-probe.jwk" >"$TMP/rust-probe.log" 2>&1
+}
+
 if needs rust; then
     if ! have "$TOKEN"; then
         mark_broken rust "$TOKEN not found (cargo/brew/apt/nix install moq-token-cli)"
@@ -238,8 +268,9 @@ if needs rust; then
     # and aborts on launch) is exactly the packaging failure this test exists to
     # catch. A broken CLI marks the whole rust row unavailable instead of crashing
     # mid-matrix.
-    elif "$TOKEN" generate --algorithm HS256 --out "$TMP/rust-probe.jwk" >"$TMP/rust-probe.log" 2>&1; then
-        echo "rust:    $(command -v "$TOKEN")"
+    elif rust_probe; then
+        sub=$(token_subcmd)
+        echo "rust:    $(command -v "$TOKEN")${sub:+ $sub}"
     else
         mark_broken rust "$TOKEN on PATH but won't run (see below)"
         sed 's/^/        /' "$TMP/rust-probe.log" >&2 || true
@@ -264,28 +295,51 @@ if needs rust-docker; then
 fi
 
 if needs js-node || needs js-bun; then
-    echo "installing js token client (@moq/token from npm)..."
-    if ! have bun; then
-        for v in js-node js-bun; do needs "$v" && mark_broken "$v" "bun not found (needed to install)"; done
-    elif (cd "$JS_DIR" && bun install) >"$TMP/js-install.log" 2>&1; then
-        # Resolve the published CLI path under each runtime we actually need.
-        if needs js-bun; then
-            if CLI_BUN=$(cd "$JS_DIR" && bun resolve-bin.mjs 2>"$TMP/js-bun-resolve.log"); then :; else
-                mark_broken js-bun "could not resolve @moq/token CLI under bun"
-                sed 's/^/        /' "$TMP/js-bun-resolve.log" >&2 || true
+    if [[ -n "${MOQ_SRC:-}" ]]; then
+        echo "installing js token client (@moq/auth from $MOQ_SRC/js)..."
+        if ! have bun; then
+            for v in js-node js-bun; do needs "$v" && mark_broken "$v" "bun not found (needed to install)"; done
+        elif (cd "$MOQ_SRC" && bun install) >"$TMP/js-install.log" 2>&1; then
+            # Drive the source CLI directly (TS source via bun/node); no bun install
+            # needed in a temp dir since workspace deps are already installed.
+            if needs js-bun; then
+                CLI_BUN="$MOQ_SRC/js/auth/src/cli.ts"
             fi
-        fi
-        if needs js-node; then
-            if ! have node; then
-                mark_broken js-node "node not found"
-            elif CLI_NODE=$(cd "$JS_DIR" && node resolve-bin.mjs 2>"$TMP/js-node-resolve.log"); then :; else
-                mark_broken js-node "could not resolve @moq/token CLI under node"
-                sed 's/^/        /' "$TMP/js-node-resolve.log" >&2 || true
+            if needs js-node; then
+                if ! have node; then
+                    mark_broken js-node "node not found"
+                else
+                    CLI_NODE="$MOQ_SRC/js/auth/src/cli.ts"
+                fi
             fi
+        else
+            for v in js-node js-bun; do needs "$v" && mark_broken "$v" "bun install in MOQ_SRC failed"; done
+            sed 's/^/        /' "$TMP/js-install.log" >&2 || true
         fi
     else
-        for v in js-node js-bun; do needs "$v" && mark_broken "$v" "bun install failed"; done
-        sed 's/^/        /' "$TMP/js-install.log" >&2 || true
+        echo "installing js token client (@moq/token from npm)..."
+        if ! have bun; then
+            for v in js-node js-bun; do needs "$v" && mark_broken "$v" "bun not found (needed to install)"; done
+        elif (cd "$JS_DIR" && bun install) >"$TMP/js-install.log" 2>&1; then
+            # Resolve the published CLI path under each runtime we actually need.
+            if needs js-bun; then
+                if CLI_BUN=$(cd "$JS_DIR" && bun resolve-bin.mjs 2>"$TMP/js-bun-resolve.log"); then :; else
+                    mark_broken js-bun "could not resolve @moq/token CLI under bun"
+                    sed 's/^/        /' "$TMP/js-bun-resolve.log" >&2 || true
+                fi
+            fi
+            if needs js-node; then
+                if ! have node; then
+                    mark_broken js-node "node not found"
+                elif CLI_NODE=$(cd "$JS_DIR" && node resolve-bin.mjs 2>"$TMP/js-node-resolve.log"); then :; else
+                    mark_broken js-node "could not resolve @moq/token CLI under node"
+                    sed 's/^/        /' "$TMP/js-node-resolve.log" >&2 || true
+                fi
+            fi
+        else
+            for v in js-node js-bun; do needs "$v" && mark_broken "$v" "bun install failed"; done
+            sed 's/^/        /' "$TMP/js-install.log" >&2 || true
+        fi
     fi
 fi
 
