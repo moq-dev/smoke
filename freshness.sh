@@ -45,18 +45,18 @@ for dep in @moq/net @moq/hang @moq/web-transport; do
         fail=1
     fi
 done
-# The token client (@moq/token, driven by token.sh under node and bun) must be latest.
-ver=$(grep -oE "\"@moq/token\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" clients/token/js/package.json | sed -E 's/.*"([^"]*)"$/\1/')
-if [[ "$ver" == "latest" ]]; then note ok "@moq/token -> \"$ver\""; else
-    note FAIL "@moq/token pinned to \"$ver\" (want \"latest\")"
+# The token client (@moq/auth, driven by token.sh under node and bun) must be latest.
+ver=$(grep -oE "\"@moq/auth\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" clients/token/js/package.json | sed -E 's/.*"([^"]*)"$/\1/')
+if [[ "$ver" == "latest" ]]; then note ok "@moq/auth -> \"$ver\""; else
+    note FAIL "@moq/auth pinned to \"$ver\" (want \"latest\")"
     fail=1
 fi
 # The token Docker image must be the unpinned (:latest) tag, pulled fresh each run.
 # shellcheck disable=SC2016  # grepping for these literal strings in token.sh; the $vars must NOT expand here
-if grep -qF 'DOCKER_TOKEN_IMAGE:-moqdev/moq-token-cli}' token.sh && grep -qF '"$DOCKER" pull "$DOCKER_TOKEN_IMAGE"' token.sh; then
-    note ok "moqdev/moq-token-cli -> :latest (pulled each run)"
+if grep -qF 'DOCKER_TOKEN_IMAGE:-moqdev/moq-cli}' token.sh && grep -qF '"$DOCKER" pull "$DOCKER_TOKEN_IMAGE"' token.sh; then
+    note ok "moqdev/moq-cli (token) -> :latest (pulled each run)"
 else
-    note FAIL "token.sh no longer pulls an unpinned moqdev/moq-token-cli :latest"
+    note FAIL "token.sh no longer pulls an unpinned moqdev/moq-cli :latest"
     fail=1
 fi
 # The media Docker channel (relay + cli wrappers) must use the unpinned (:latest)
@@ -142,8 +142,8 @@ fi
 # From-dev consumes a moq checkout, not npm/crates.io latest. The published
 # matrix above stays on latest; this channel is what proves unpublished `main`.
 # shellcheck disable=SC2016
-if grep -q 'ln -sfn "$MOQ_SRC/js/$pkg"' dev.sh && grep -q 'MOQ_REF:-main}' dev.sh && grep -q 'MOQ_PIN:-' dev.sh; then
-    note ok "from-dev JS packages -> MOQ_SRC/js (git ref default: main, pinned)"
+if grep -q 'ln -sfn "$MOQ_SRC/js/$pkg"' dev.sh && grep -q 'MOQ_REF:-main}' dev.sh && ! grep -q 'MOQ_PIN' dev.sh; then
+    note ok "from-dev JS packages -> MOQ_SRC/js (git ref default: main tip, unpinned)"
 else
     note FAIL "dev.sh no longer installs unpublished JS packages from a moq checkout"
     fail=1

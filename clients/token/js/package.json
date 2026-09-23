@@ -2,8 +2,8 @@
 	"name": "moq-smoke-token",
 	"private": true,
 	"type": "module",
-	"description": "Installs the published @moq/token package so token.sh can drive its CLI under node and bun.",
+	"description": "Installs the published @moq/auth package so token.sh can drive its CLI under node and bun.",
 	"dependencies": {
-		"@moq/token": "latest"
+		"@moq/auth": "latest"
 	}
 }

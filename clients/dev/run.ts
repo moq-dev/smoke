@@ -28,7 +28,9 @@ try {
 	]);
 } catch (err) {
 	console.error(`error: ${err instanceof Error ? err.message : String(err)}`);
-	process.exitCode = 1;
+	// Hard exit: Promise.race doesn't cancel the losing case, and its open
+	// connections would otherwise keep bun alive past the timeout.
+	process.exit(1);
 } finally {
 	if (timeoutId !== undefined) clearTimeout(timeoutId);
 }

@@ -2,7 +2,7 @@
 // Models the moq.pro live session (reconnecting handle, URL swap, announce cursor)
 // without copying that app.
 import * as Moq from "@moq/net";
-import { connected, handle, waitActive, waitAnnounce, waitUntil } from "./lib.ts";
+import { connected, handle, REPLAY_MS, waitActive, waitAnnounce, waitUntil } from "./lib.ts";
 
 const PATH = "dev.live";
 
@@ -85,7 +85,7 @@ function publish(origin: Moq.Origin.Table, path: string, payload: string) {
 }
 
 async function expectFrame(broadcast: Moq.Broadcast.Consumer, payload: string): Promise<void> {
-	const track = broadcast.track("messages").subscribe({ priority: 0, maxAge: 30_000 });
+	const track = broadcast.track("messages").subscribe({ priority: 0, maxAge: REPLAY_MS });
 	try {
 		const group = await track.recvGroup();
 		if (!group) throw new Error("track ended before a group arrived");

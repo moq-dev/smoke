@@ -1,7 +1,7 @@
 // Shared helpers for the from-dev API contract cases.
 import * as Moq from "@moq/net";
 
-export const REPLAY_MS = 30_000;
+export const REPLAY_MS = Moq.Time.Milli(30_000);
 
 export function parseUrl(): { url: URL; timeoutMs: number } {
 	const args = process.argv.slice(2);
@@ -15,7 +15,12 @@ export function parseUrl(): { url: URL; timeoutMs: number } {
 		console.error("usage: run.ts --url URL [--timeout S]");
 		process.exit(2);
 	}
-	return { url: new URL(url), timeoutMs: Number.parseFloat(timeout) * 1000 };
+	const seconds = Number(timeout);
+	if (!Number.isFinite(seconds) || seconds <= 0) {
+		console.error(`invalid --timeout: ${timeout}`);
+		process.exit(2);
+	}
+	return { url: new URL(url), timeoutMs: seconds * 1000 };
 }
 
 export async function waitUntil(pred: () => boolean, label: string, ms = 10_000): Promise<void> {
@@ -39,9 +44,9 @@ export async function connected(conn: Moq.Connection, ms = 10_000): Promise<Moq.
 }
 
 export function announcedPath(entry: Moq.Announce.Update): string {
-	// Path.Valid is a branded string; the announcement path is already relative
-	// to the session origin.
-	return entry.path as string;
+	// Path.Valid is a branded string; an announcement is a prefix relative to the
+	// session origin, and a publisher announces each broadcast's exact path.
+	return entry.prefix as string;
 }
 
 export async function waitAnnounce(
@@ -58,7 +63,7 @@ export async function waitAnnounce(
 }
 
 export async function waitActive(
-	request: Moq.Origin.Request,
+	request: Moq.Origin.Requesting,
 	label: string,
 	ms = 10_000,
 ): Promise<Moq.Broadcast.Consumer> {
@@ -74,5 +79,5 @@ export function equal(a: unknown, b: unknown): boolean {
 
 export function handle(url: URL): Moq.Connection {
 	// Private loops so a publisher and a subscriber do not share an origin and skip the relay.
-	return new Moq.Connection({ url, share: false, linger: 0 });
+	return new Moq.Connection({ url, share: false, linger: Moq.Time.Milli(0) });
 }

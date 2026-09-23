@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Prove the unpublished API by installing JS packages from a moq checkout
-# (path or git `main` at a pinned revision) and running contract cases a
+# (path or a git ref, `main` by default) and running contract cases a
 # published-package matrix cannot see yet. The cargo/apt/brew/nix/docker media
 # matrix is unchanged: this is a second channel, not a replacement.
 #
 #   MOQ_SRC=/path/to/moq ./dev.sh
 #   ./dev.sh --src /path/to/moq
-#   ./dev.sh                 # clones github.com/moq-dev/moq (main, pinned) into a temp dir
+#   ./dev.sh                 # clones github.com/moq-dev/moq (main tip) into a temp dir
+#   ./dev.sh --ref <branch>  # or another branch/tag
 set -euo pipefail
 
 SMOKE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -16,9 +17,6 @@ PORT="${SMOKE_PORT:-}"
 MOQ_SRC="${MOQ_SRC:-}"
 MOQ_GIT="${MOQ_GIT:-https://github.com/moq-dev/moq.git}"
 MOQ_REF="${MOQ_REF:-main}"
-# Pinned pre-publish revision: the merge that introduced the breaking API
-# surface under test. Override with --ref / MOQ_REF to move it forward.
-MOQ_PIN="${MOQ_PIN:-5d0991b9991305be907e6c0682a4e276722eeed0}"
 
 require_value() {
     if [[ $# -lt 2 || -z "${2:-}" || "$2" == -* ]]; then
@@ -42,11 +40,6 @@ while [[ $# -gt 0 ]]; do
         --ref)
             require_value "$@"
             MOQ_REF="$2"
-            shift 2
-            ;;
-        --pin)
-            require_value "$@"
-            MOQ_PIN="$2"
             shift 2
             ;;
         --timeout)
@@ -90,12 +83,9 @@ for t in bun cargo curl git pgrep; do
 done
 
 if [[ -z "$MOQ_SRC" ]]; then
-    echo "cloning $MOQ_GIT ($MOQ_REF @ ${MOQ_PIN:-HEAD})..."
+    echo "cloning $MOQ_GIT ($MOQ_REF)..."
     git clone --depth 1 --branch "$MOQ_REF" "$MOQ_GIT" "$TMP/moq"
     MOQ_SRC="$TMP/moq"
-    if [[ -n "${MOQ_PIN:-}" ]]; then
-        git -C "$MOQ_SRC" fetch --depth 1 origin "$MOQ_PIN" && git -C "$MOQ_SRC" checkout "$MOQ_PIN"
-    fi
 elif [[ ! -d "$MOQ_SRC" ]]; then
     echo "error: --src is not a directory: $MOQ_SRC" >&2
     exit 1
@@ -105,9 +95,6 @@ MOQ_SRC=$(cd "$MOQ_SRC" && pwd)
 echo "moq:     $MOQ_SRC"
 echo "revision: $(git -C "$MOQ_SRC" rev-parse HEAD)"
 echo "ref:      $(git -C "$MOQ_SRC" rev-parse --abbrev-ref HEAD 2>/dev/null || echo detached)"
-if [[ -n "${MOQ_PIN:-}" ]] && [[ "$(git -C "$MOQ_SRC" rev-parse HEAD)" != "$MOQ_PIN" ]]; then
-    echo "warn: MOQ_SRC revision $(git -C "$MOQ_SRC" rev-parse --short HEAD) != pinned $MOQ_PIN (testing unpinned source)" >&2
-fi
 
 RELAY="${RELAY_BIN:-}"
 if [[ -z "$RELAY" ]]; then
