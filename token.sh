@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # Cross-implementation token interop smoke test against the PUBLIC packages.
 #
-# moq-relay authenticates with JWTs minted by the moq-token tooling, which ships
+# moq-relay authenticates with JWTs minted by the moq auth tooling, which ships
 # in several flavours from several registries:
 #
-#   - rust    : the moq-token binary (cargo / brew / apt), or `moq auth` from
-#               moq-cli >= 0.12 where the token CLI now lives (nix)
-#   - js-node : the @moq/token npm package's `moq-token` CLI, run under node
+#   - rust    : `moq auth` from moq-cli (cargo / brew / apt / nix)
+#   - js-node : the @moq/auth npm package's `moq-auth` CLI, run under node
 #   - js-bun  : the same published npm package, run under bun
 #
 # A token minted by any one of these must verify under every other one, or a
@@ -34,14 +33,14 @@ VERIFIERS="rust"
 # can't silently stop exercising one. Override with --algorithms / TOKEN_ALGORITHMS.
 ALGORITHMS="${TOKEN_ALGORITHMS:-HS256,EdDSA,ES256,RS256}"
 
-# The Rust CLI under test, as a command prefix. Whatever channel installed it
-# (cargo/brew/apt/nix) just has to leave it on PATH; override here to point at a
-# specific build, e.g. TOKEN_BIN="/path/to/moq auth".
-TOKEN="${TOKEN_BIN:-}"
+# The Rust CLI under test, as a command prefix: the same `moq` binary smoke.sh
+# tests (MOQ_BIN, else PATH), since moq-token-cli was folded into `moq auth`
+# (moq-dev/moq#3684). TOKEN_BIN overrides the whole prefix.
+TOKEN="${TOKEN_BIN:-${MOQ_BIN:-moq} auth}"
 
 # The published Docker image for the `rust-docker` cell. Untagged = :latest, the
 # tag the release pipeline moves to the newest version; pulled fresh each run.
-DOCKER_TOKEN_IMAGE="${DOCKER_TOKEN_IMAGE:-moqdev/moq-token-cli}"
+DOCKER_TOKEN_IMAGE="${DOCKER_TOKEN_IMAGE:-moqdev/moq-cli}"
 # Container runtime for that cell. `docker` by default (what GitHub's Linux
 # runners ship); set TOKEN_DOCKER=podman to use a drop-in-compatible one.
 DOCKER="${TOKEN_DOCKER:-docker}"
@@ -94,8 +93,8 @@ needs() {
 }
 
 TMP=$(mktemp -d)
-CLI_NODE="" # node + @moq/token CLI path (set in prepare)
-CLI_BUN=""  # bun  + @moq/token CLI path (set in prepare)
+CLI_NODE="" # node + @moq/auth CLI path (set in prepare)
+CLI_BUN=""  # bun  + @moq/auth CLI path (set in prepare)
 BROKEN_IMPLS=""
 
 mark_broken() {
@@ -118,22 +117,6 @@ trap cleanup EXIT
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
-resolve_token() {
-    # Prefer the standalone binary while channels still ship it, then fall back to
-    # `moq auth`, which replaced moq-token-cli upstream (moq-dev/moq#3684).
-    # TOKEN_BIN remains authoritative when set.
-    [[ -n "$TOKEN" ]] && return 0
-    if have moq-token; then
-        TOKEN=moq-token
-    elif have moq-token-cli; then
-        TOKEN=moq-token-cli
-    elif have moq && moq auth --help >/dev/null 2>&1; then
-        TOKEN="moq auth"
-    else
-        TOKEN=moq-token
-    fi
-}
-
 # ── per-implementation adapters ──────────────────────────────────────────────
 # Each implementation's CLI differs (flag names, key encoding, verify output),
 # so every operation is funnelled through an adapter that normalises it. The
@@ -147,18 +130,18 @@ resolve_token() {
 # Symmetric (HS256): sign.jwk == verify.jwk (shared secret).
 # Asymmetric (EdDSA/ES256/RS256): verify.jwk is the public half.
 # Key encodings cross over fine: the Rust CLI writes base64url-JSON and reads
-# either; @moq/token writes plain JSON and reads either.
+# either; @moq/auth writes plain JSON and reads either.
 
 cli_for() {
-    # The command prefix that runs each implementation's moq-token CLI. The word
+    # The command prefix that runs each implementation's token CLI. The word
     # split is deliberate (runtime + path, or a whole `docker run ...` line), so
     # callers expand it unquoted.
     case "$1" in
-        rust) echo "$TOKEN" ;; # may be multi-word, e.g. `moq auth`
+        rust) echo "$TOKEN" ;;
         # Mount TMP at its real path so the in-container CLI reads/writes the same
         # key/token files token.sh hands it. The image bundles the nix store, so
         # the binary's libiconv deps resolve (the brew bottle's bug doesn't apply).
-        rust-docker) echo "$DOCKER run --rm --user $(id -u):$(id -g) -v $TMP:$TMP -w $TMP $DOCKER_TOKEN_IMAGE" ;;
+        rust-docker) echo "$DOCKER run --rm --user $(id -u):$(id -g) -v $TMP:$TMP -w $TMP $DOCKER_TOKEN_IMAGE auth" ;;
         js-node) echo "node $CLI_NODE" ;;
         js-bun) echo "bun $CLI_BUN" ;;
         *) return 1 ;;
@@ -187,11 +170,11 @@ gen() {
         js-node | js-bun)
             if [[ "$algo" == HS* ]]; then
                 # shellcheck disable=SC2086
-                $cli generate --key "$dir/sign.jwk" --algorithm "$algo" >/dev/null
+                $cli generate --out "$dir/sign.jwk" --algorithm "$algo" >/dev/null
                 cp "$dir/sign.jwk" "$dir/verify.jwk"
             else
                 # shellcheck disable=SC2086
-                $cli generate --key "$dir/sign.jwk" --algorithm "$algo" --public "$dir/verify.jwk" >/dev/null
+                $cli generate --out "$dir/sign.jwk" --algorithm "$algo" --public "$dir/verify.jwk" >/dev/null
             fi
             ;;
     esac
@@ -238,11 +221,10 @@ rust_probe() {
 }
 
 "$SMOKE_DIR/freshness.sh" || echo "WARN: freshness check failed (see above); continuing" >&2
-resolve_token
 
 if needs rust; then
     if ! have "${TOKEN%% *}"; then
-        mark_broken rust "$TOKEN not found (install moq-token-cli, or moq-cli >= 0.12 for moq auth)"
+        mark_broken rust "${TOKEN%% *} not found (cargo/brew/apt/nix install moq-cli)"
     # `have` only checks the file exists; actually run it once, since a broken
     # published binary (e.g. a Homebrew bottle that baked in a /nix/store rpath
     # and aborts on launch) is exactly the packaging failure this test exists to
@@ -265,7 +247,7 @@ if needs rust-docker; then
     # always-latest install), then run it once to confirm the image works.
     elif "$DOCKER" pull "$DOCKER_TOKEN_IMAGE" >"$TMP/docker-pull.log" 2>&1 &&
         "$DOCKER" run --rm --user "$(id -u):$(id -g)" -v "$TMP:$TMP" -w "$TMP" \
-            "$DOCKER_TOKEN_IMAGE" generate --algorithm HS256 --out "$TMP/docker-probe.jwk" >"$TMP/docker-probe.log" 2>&1; then
+            "$DOCKER_TOKEN_IMAGE" auth generate --algorithm HS256 --out "$TMP/docker-probe.jwk" >"$TMP/docker-probe.log" 2>&1; then
         echo "rust-docker: $DOCKER_TOKEN_IMAGE (latest, via $DOCKER)"
     else
         mark_broken rust-docker "$DOCKER pull/run $DOCKER_TOKEN_IMAGE failed (see below)"
@@ -274,14 +256,14 @@ if needs rust-docker; then
 fi
 
 if needs js-node || needs js-bun; then
-    echo "installing js token client (@moq/token from npm)..."
+    echo "installing js token client (@moq/auth from npm)..."
     if ! have bun; then
         for v in js-node js-bun; do needs "$v" && mark_broken "$v" "bun not found (needed to install)"; done
     elif (cd "$JS_DIR" && bun install) >"$TMP/js-install.log" 2>&1; then
         # Resolve the published CLI path under each runtime we actually need.
         if needs js-bun; then
             if CLI_BUN=$(cd "$JS_DIR" && bun resolve-bin.mjs 2>"$TMP/js-bun-resolve.log"); then :; else
-                mark_broken js-bun "could not resolve @moq/token CLI under bun"
+                mark_broken js-bun "could not resolve @moq/auth CLI under bun"
                 sed 's/^/        /' "$TMP/js-bun-resolve.log" >&2 || true
             fi
         fi
@@ -289,7 +271,7 @@ if needs js-node || needs js-bun; then
             if ! have node; then
                 mark_broken js-node "node not found"
             elif CLI_NODE=$(cd "$JS_DIR" && node resolve-bin.mjs 2>"$TMP/js-node-resolve.log"); then :; else
-                mark_broken js-node "could not resolve @moq/token CLI under node"
+                mark_broken js-node "could not resolve @moq/auth CLI under node"
                 sed 's/^/        /' "$TMP/js-node-resolve.log" >&2 || true
             fi
         fi

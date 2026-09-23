@@ -96,7 +96,7 @@ cloudflare.sh            orchestrator: Cloudflare client through both projects' 
 moxygen.sh               orchestrator: moxygen protocol client through the moq-dev relay
 smoke.toml               relay config (anonymous, self-signed localhost)
 smoke-legacy.toml        same, pre-0.15 layout; smoke.sh picks it for relays without --listen
-token.sh                 orchestrator: moq-token generate/verify interop matrix
+token.sh                 orchestrator: moq auth generate/verify interop matrix
 clients/
   python/smoke.py        publish/subscribe via moq-rs (PyPI)
   go/                     publish/subscribe via moq-dev/moq-go (go get)
@@ -108,7 +108,7 @@ clients/
   js-native/subscribe.ts subscribe via @moq/net + @moq/hang + WebTransport polyfill (node, bun)
   (gst)                   subscribe via the moq-gst plugin (moqsrc); no client dir, driven by gst-launch
   docker/                 moq-relay + moq wrappers: docker run the moqdev/* images (the docker channel)
-  token/js/              installs @moq/token (npm) for token.sh to drive under node + bun
+  token/js/              installs @moq/auth (npm) for token.sh to drive under node + bun
   cloudflare/             deterministic subgroup/datagram client using cloudflare/moq-rs Git HEAD
 freshness.sh             enforces the "always latest, no package locks" policy
 .github/workflows/smoke.yml   nightly + on-demand CI matrix (os x channel)
@@ -124,17 +124,15 @@ published flavours, and this test proves they cross-verify:
 
 | Cell | Source under test | Install |
 |---|---|---|
-| `rust` | the `moq-token` binary (crates.io / Homebrew tap / apt repo), or `moq auth` from the moq flake | `cargo install moq-token-cli`, `brew install moq-dev/tap/moq-token-cli`, `apt install`, `nix run github:moq-dev/moq#moq-cli -- auth` |
-| `js-node` | npm [`@moq/token`](https://www.npmjs.com/package/@moq/token)'s `moq-token` CLI, run under **node** | `npm i @moq/token` |
-| `js-bun` | the same published npm package, run under **bun** | `npm i @moq/token` |
-| `rust-docker` | the [`moqdev/moq-token-cli`](https://hub.docker.com/r/moqdev/moq-token-cli) Docker Hub image (`:latest`) | `docker run moqdev/moq-token-cli …` |
+| `rust` | `moq auth` from the `moq` binary (crates.io / Homebrew tap / apt repo / the moq flake) | `cargo install moq-cli`, `brew install moq-dev/tap/moq-cli`, `apt install moq-cli`, `nix run github:moq-dev/moq#moq-cli -- auth` |
+| `js-node` | npm [`@moq/auth`](https://www.npmjs.com/package/@moq/auth)'s `moq-auth` CLI, run under **node** | `npm i @moq/auth` |
+| `js-bun` | the same published npm package, run under **bun** | `npm i @moq/auth` |
+| `rust-docker` | the [`moqdev/moq-cli`](https://hub.docker.com/r/moqdev/moq-cli) Docker Hub image (`:latest`) | `docker run moqdev/moq-cli auth …` |
 
-Like `smoke.sh`, the Rust binary is taken from `PATH` (or `TOKEN_BIN`), preferring
-`moq-token`, then `moq-token-cli`, then `moq auth` (which replaced
-`moq-token-cli` upstream); `TOKEN_BIN` may be a command prefix like `moq auth`;
-`@moq/token` is installed from npm on each run; `rust-docker` `docker pull`s the
-`moqdev/moq-token-cli`
-image fresh (`:latest`) and runs the CLI in a throwaway container with the scratch
+Like `smoke.sh`, the Rust CLI is `moq` from `PATH` (or `MOQ_BIN`), run as
+`moq auth` (it replaced `moq-token-cli` upstream; `TOKEN_BIN` overrides the whole
+command prefix); `@moq/auth` is installed from npm on each run; `rust-docker`
+`docker pull`s the `moqdev/moq-cli` image fresh (`:latest`) and runs the CLI in a throwaway container with the scratch
 dir bind-mounted. The image is built `FROM nixos/nix` and ships the nix store, so
 it's a genuinely different artifact from the `cargo`/`brew`/`apt` binaries — and
 in CI it runs only on the Linux runners (GitHub's macOS runners have no Docker
@@ -143,7 +141,7 @@ daemon); set `TOKEN_DOCKER=podman` to drive it with podman. For every
 generator mints a key and signs a token, and the verifier checks it — covering
 both symmetric (`HS256`, shared secret) and asymmetric (`EdDSA`/`ES256`/`RS256`,
 sign-private/verify-public) keys, and the fact that one side's key encoding
-(the Rust CLI writes base64url-JSON; `@moq/token` writes plain JSON) loads on the
+(the Rust CLI writes base64url-JSON; `@moq/auth` writes plain JSON) loads on the
 other. A negative pass then confirms each verifier **rejects** a tampered token
 and a token signed by the wrong key, so a green cell means "accepts the valid
 one and refuses the bad ones", not "accepts everything".
@@ -156,7 +154,7 @@ export that didn't survive `tsc`) shows up as a red cell.
 ```bash
 just token            # default: rust generates + verifies (roundtrip + negatives)
 just token-full       # full matrix: rust, js-node, js-bun + rust-docker (the
-                      # moqdev/moq-token-cli image, where a container runtime is
+                      # moqdev/moq-cli image, where a container runtime is
                       # available; set TOKEN_DOCKER=podman to use podman)
 # or call it directly with explicit axes:
 ./token.sh --generators rust,js-node --verifiers rust,js-bun --algorithms HS256,EdDSA
@@ -187,7 +185,7 @@ This test tracks the **latest published** packages, so it sometimes runs ahead o
 - **Native JS on node** (`js-native-node`): working. node briefly lagged bun here: `@moq/web-transport`'s `session.ts` did `import { NapiClient } from "../napi.js"` — a *named* import from a napi-rs CJS module whose exports node's ESM loader can't statically see, so node threw `does not provide an export named 'NapiClient'` while Bun's looser CJS interop accepted it. `@moq/web-transport` 0.1.2 shipped the predicted fix (default-import the now-`.cjs` binding, then destructure `NapiClient`), so this cell is green. Exactly the break-then-fix this repo exists to surface.
 - **Go (any role)**: working. The `moq-dev/moq-go` module was un-buildable (stuck at v0.2.15, missing the generated `moq.h` header and the prebuilt static libs, so `go get` + build failed); v0.2.22 now ships `moq.h` plus `libmoq_ffi.a` for linux (amd64/arm64), darwin, and windows, and a `CGO_ENABLED=1 go build` against it links cleanly — verified in a linux/amd64 container, clearing the blocker that kept this cell red. One caveat the matrix doesn't see: building the Go client on **macOS** still fails to link, because the module's darwin cgo `LDFLAGS` omit `-framework CoreServices` (needed by the bundled Rust `notify` crate's FSEvents backend); CI only builds Go on Linux. Tracked upstream in moq-dev/moq's `go/moq/cgo.go`.
 - **GStreamer subscribe** (`gst`): working. `moq-gst` ships apt/brew/rpm/tarball + nix artifacts, so the cell resolves the newest tag and selects the matching platform tarball from that release's asset metadata. The published plugin load-checks green — `gst-inspect-1.0 moq` exposes `moqsrc`/`moqsink` against a system GStreamer — and `moqsrc` reads a rust-published H.264 broadcast end-to-end.
-- **Token interop** (`token.sh`): working on **cargo / apt / nix** plus the **`moqdev/moq-token-cli` Docker image** (Linux). The published `moq-token` binary (from crates.io / apt / nix / Docker Hub) and `@moq/token` (npm, under both node and bun) cross-verify every token across `HS256`, `EdDSA`, `ES256`, and `RS256`, and each verifier rejects tampered tokens and the wrong key. The Docker cell (`rust-docker`) proves the image — built `FROM nixos/nix`, so it carries the libiconv the brew bottle used to leak — runs cleanly. Subscriber-only languages don't ship token tooling yet, so the matrix is rust (binary + Docker) + the two JS runtimes for now.
+- **Token interop** (`token.sh`): working on **cargo / apt / nix** plus the **`moqdev/moq-cli` Docker image** (Linux). The published `moq auth` (from crates.io / apt / nix / Docker Hub) and `@moq/auth` (npm, under both node and bun) cross-verify every token across `HS256`, `EdDSA`, `ES256`, and `RS256`, and each verifier rejects tampered tokens and the wrong key. The Docker cell (`rust-docker`) proves the image — built `FROM nixos/nix`, so it carries the libiconv the brew bottle used to leak — runs cleanly. Subscriber-only languages don't ship token tooling yet, so the matrix is rust (binary + Docker) + the two JS runtimes for now.
 - **Token interop on the Homebrew bottle** (`rust` cells, macOS `brew`): working. The `moq-dev/tap/moq-token-cli` package's `moq-token` binary used to abort on launch — it baked in a `/nix/store/…-libiconv/lib/libiconv.2.dylib` rpath from the build sandbox that doesn't exist on a user's Mac (`dyld: Library not loaded`). The 0.5.31 bottle fixes it: its only `LC_RPATH` is now `/usr/lib`, so `@rpath/libiconv.2.dylib` resolves to the system libiconv and the binary runs (verified locally — `generate --algorithm HS256` succeeds, no leaked `/nix/store` rpath). `token.sh` still probes the binary once at startup, so a relapse would be caught again. Exactly the break-then-fix this repo exists to surface.
 - **Cloudflare interoperability**: the Cloudflare client publishes and subscribes over WebTransport and raw QUIC through both `cloudflare/moq-rs`'s `moq-relay-ietf` and `moq-dev/moq`'s `moq-relay`, with sustained subgroup payloads checked byte-for-byte. Cloudflare's relay additionally exercises datagrams in both directions. This is a source-head smoke test, so a later upstream commit can intentionally turn it red.
 - **Moxygen interoperability**: currently **red**. Moxygen's published source-head interop client negotiates draft-16 and passes 5/6 relay scenarios through `moq-dev/moq`, but `announce-subscribe` closes the subscriber session instead of routing it to the announced publisher. The failure reproduces over WebTransport and raw QUIC with the published relay, and over WebTransport with current moq-dev HEAD. CI runs the full Linux/amd64 Docker lane as non-blocking diagnostic coverage until the mismatch is fixed; `just moxygen` still exits nonzero locally.
