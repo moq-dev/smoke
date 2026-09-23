@@ -449,20 +449,20 @@ if needs python; then
 fi
 
 if needs go; then
-    echo "building go client (moq-dev/moq-go from the module proxy)..."
+    echo "building go client (moq.dev/moq from the module proxy)..."
     GO_SMOKE="$TMP/go-smoke"
     # Pull the latest published module, then build the client against it. The
-    # ergonomic moq-go wrapper pulls a transitive moq-go-ffi; `go get moq-go`
-    # records only moq-go's own checksum, so `go mod tidy` fetches the rest (no
+    # ergonomic moq.dev/moq wrapper pulls a transitive moq.dev/moq-ffi; `go get`
+    # records only the wrapper's own checksum, so `go mod tidy` fetches the rest (no
     # go.sum is committed -- freshness bans lockfiles -- so it's regenerated here).
     # The module proxy / sum.golang.org occasionally reset mid-stream; retry the
     # fetch (idempotent) and build only once it succeeds.
     # shellcheck disable=SC2329  # invoked via retry
-    go_fetch() (cd "$CLIENTS/go" && go get "github.com/moq-dev/moq-go@latest" && go mod tidy)
+    go_fetch() (cd "$CLIENTS/go" && go get "moq.dev/moq@latest" && go mod tidy)
     if ! have go; then
         mark_broken go "go not found"
     elif (retry 3 go_fetch && cd "$CLIENTS/go" && CGO_ENABLED=1 go build -o "$GO_SMOKE" .) >"$TMP/go-build.log" 2>&1; then :; else
-        mark_broken go "go get/build of moq-dev/moq-go failed"
+        mark_broken go "go get/build of moq.dev/moq failed"
         sed 's/^/        /' "$TMP/go-build.log" >&2 || true
     fi
 fi

@@ -2,6 +2,6 @@ module moqsmoke
 
 go 1.23
 
-require github.com/moq-dev/moq-go v0.5.0
+require moq.dev/moq v0.7.0
 
-require github.com/moq-dev/moq-go-ffi v0.3.2 // indirect
+require moq.dev/moq-ffi v0.4.0 // indirect

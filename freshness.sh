@@ -82,10 +82,10 @@ else
     note FAIL "smoke.sh no longer installs moq-rs unpinned"
     fail=1
 fi
-if grep -q 'go get "github.com/moq-dev/moq-go@latest"' smoke.sh; then
-    note ok "moq-go -> go get @latest"
+if grep -q 'go get "moq.dev/moq@latest"' smoke.sh; then
+    note ok "moq.dev/moq -> go get @latest"
 else
-    note FAIL "smoke.sh no longer go-gets moq-go @latest"
+    note FAIL "smoke.sh no longer go-gets moq.dev/moq @latest"
     fail=1
 fi
 # Both relays and the local integrity client deliberately follow their

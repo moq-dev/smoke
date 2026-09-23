@@ -18,7 +18,7 @@ We check that bytes move across implementations, not that H.264 decodes.
 |---|---|---|
 | `moq-relay` + `moq` (Rust) | crates.io / Homebrew tap / apt repo / the moq flake / Docker Hub | `cargo install`, `brew install moq-dev/tap/...`, `apt install`, `nix build github:moq-dev/moq#...`, `docker run moqdev/moq-relay` |
 | Python | [PyPI `moq-rs`](https://pypi.org/project/moq-rs/) (import `moq`) | `uv pip install moq-rs` |
-| Go | [`github.com/moq-dev/moq-go`](https://github.com/moq-dev/moq-go) | `go get` |
+| Go | [`moq.dev/moq`](https://pkg.go.dev/moq.dev/moq) (mirrored at [moq-dev/moq-go](https://github.com/moq-dev/moq-go)) | `go get` |
 | Browser | npm [`@moq/watch`](https://www.npmjs.com/package/@moq/watch) + [`@moq/publish`](https://www.npmjs.com/package/@moq/publish), delivered three ways | headless Chromium (Playwright) loading a **vite** bundle, an **esbuild** bundle, or straight from the **jsDelivr** ESM CDN |
 | Native JS | npm [`@moq/net`](https://www.npmjs.com/package/@moq/net) + [`@moq/hang`](https://www.npmjs.com/package/@moq/hang) + moq's own [`@moq/web-transport`](https://www.npmjs.com/package/@moq/web-transport) polyfill | non-browser runtimes: **node** and **bun** |
 | Swift | SPM [`moq-dev/moq-swift`](https://github.com/moq-dev/moq-swift) | `swift build` (macOS, Xcode toolchain) |
@@ -99,7 +99,7 @@ smoke-legacy.toml        same, pre-0.15 layout; smoke.sh picks it for relays wit
 token.sh                 orchestrator: moq auth generate/verify interop matrix
 clients/
   python/smoke.py        publish/subscribe via moq-rs (PyPI)
-  go/                     publish/subscribe via moq-dev/moq-go (go get)
+  go/                     publish/subscribe via moq.dev/moq (go get)
   js/                     headless-Chromium publish/subscribe via @moq/watch + @moq/publish;
                           three delivery variants: vite, esbuild, jsdelivr (shared jsdelivr/setup.js)
   swift/                  subscribe via moq-dev/moq-swift (SPM, macOS)

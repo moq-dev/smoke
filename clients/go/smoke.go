@@ -1,7 +1,7 @@
 // Cross-language interop client for the smoke test, built against the ergonomic
-// github.com/moq-dev/moq-go wrapper (package moq: Dial, CreateBroadcast,
-// PublishMediaStream, SubscribeMedia, range-over-func frame iterators). The raw
-// uniffi-bindgen-go surface lives in github.com/moq-dev/moq-go-ffi; this client
+// moq.dev/moq wrapper (package moq: Dial, CreateBroadcast,
+// PublishVideoStream, SubscribeMedia, range-over-func frame iterators). The raw
+// uniffi-bindgen-go surface lives in moq.dev/moq-ffi; this client
 // exercises the idiomatic wrapper a real Go user would reach for.
 //
 // publish reads raw Annex-B H.264 from stdin (e.g. piped from ffmpeg) and feeds
@@ -21,7 +21,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/moq-dev/moq-go/moq"
+	"moq.dev/moq"
 )
 
 const readChunk = 64 * 1024
@@ -77,9 +77,9 @@ func publish(url, broadcast string) error {
 	defer producer.Finish()
 
 	// avc3: a self-describing Annex-B H.264 stream the importer can frame on its
-	// own. PublishMediaStream feeds the raw byte stream; whole frames are emitted
+	// own. PublishVideoStream feeds the raw byte stream; whole frames are emitted
 	// as they complete.
-	media, err := producer.PublishMediaStream("avc3")
+	media, err := producer.PublishVideoStream(moq.VideoFormatAvc3)
 	if err != nil {
 		return err
 	}
@@ -133,7 +133,7 @@ func subscribe(url, broadcast string, timeoutS float64) error {
 		return err
 	}
 
-	media, err := bc.SubscribeMedia(name, video.Container, nil)
+	media, err := bc.SubscribeMedia(ctx, name, video.Container, nil)
 	if err != nil {
 		return err
 	}
@@ -155,7 +155,7 @@ func subscribe(url, broadcast string, timeoutS float64) error {
 // lazy publisher (e.g. the browser, which only encodes on demand) may announce
 // video in a later update, not the first snapshot.
 func videoTrack(ctx context.Context, bc *moq.BroadcastConsumer) (string, moq.Video, error) {
-	cat, err := bc.SubscribeCatalog()
+	cat, err := bc.SubscribeCatalog(ctx)
 	if err != nil {
 		return "", moq.Video{}, err
 	}
