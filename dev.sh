@@ -103,7 +103,10 @@ if [[ -z "$RELAY" ]]; then
         sed 's/^/  cargo: /' "$TMP/cargo.log" >&2
         exit 1
     }
-    RELAY="$MOQ_SRC/target/debug/moq-relay"
+    # Honor CARGO_TARGET_DIR / build.target-dir rather than assuming ./target.
+    TARGET_DIR=$(cd "$MOQ_SRC" && cargo metadata --format-version 1 --no-deps |
+        bun -e 'console.log(JSON.parse(await Bun.stdin.text()).target_directory)')
+    RELAY="$TARGET_DIR/debug/moq-relay"
 fi
 if [[ ! -x "$RELAY" ]]; then
     echo "error: moq-relay not found at $RELAY" >&2
