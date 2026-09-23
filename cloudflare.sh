@@ -136,11 +136,12 @@ start_relay() {
             ready="$HTTPS_URL/fingerprint"
             ;;
         moq-dev)
-            "$MOQ_RELAY" --server-bind "127.0.0.1:${PORT}" \
-                --tls-cert "$TMP/localhost.crt" --tls-key "$TMP/localhost.key" \
+            # Git HEAD relay: the >= 0.15 flag names and pattern-based public auth.
+            "$MOQ_RELAY" --listen "127.0.0.1:${PORT}" \
+                --listen-tls-cert "$TMP/localhost.crt" --listen-tls-key "$TMP/localhost.key" \
                 --web-https-listen "127.0.0.1:${PORT}" \
                 --web-https-cert "$TMP/localhost.crt" --web-https-key "$TMP/localhost.key" \
-                --auth-public "" >"$TMP/relay-moq-dev.log" 2>&1 &
+                --auth-public "**" >"$TMP/relay-moq-dev.log" 2>&1 &
             ready="$HTTPS_URL/certificate.sha256"
             ;;
         *)

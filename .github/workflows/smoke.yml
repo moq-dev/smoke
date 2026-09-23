@@ -153,11 +153,11 @@ jobs:
         run: |
           relay=$(nix build --refresh --no-link --print-out-paths 'github:moq-dev/moq#moq-relay')
           cli=$(nix build --refresh --no-link --print-out-paths 'github:moq-dev/moq#moq-cli')
-          token=$(nix build --refresh --no-link --print-out-paths 'github:moq-dev/moq#moq-token-cli')
+          # moq-token-cli was folded into `moq auth` (moq-dev/moq#3684).
           {
             echo "RELAY_BIN=$relay/bin/moq-relay"
             echo "MOQ_BIN=$cli/bin/moq"
-            echo "TOKEN_BIN=$token/bin/moq-token"
+            echo "TOKEN_BIN=$cli/bin/moq auth"
           } >> "$GITHUB_ENV"
 
       - name: Pull moqdev images (docker channel)

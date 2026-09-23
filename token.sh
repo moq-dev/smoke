@@ -4,7 +4,8 @@
 # moq-relay authenticates with JWTs minted by the moq-token tooling, which ships
 # in several flavours from several registries:
 #
-#   - rust    : the moq-token binary (cargo / brew / apt / nix), on PATH
+#   - rust    : the moq-token binary (cargo / brew / apt), or `moq auth` from
+#               moq-cli >= 0.12 where the token CLI now lives (nix)
 #   - js-node : the @moq/token npm package's `moq-token` CLI, run under node
 #   - js-bun  : the same published npm package, run under bun
 #
@@ -33,8 +34,9 @@ VERIFIERS="rust"
 # can't silently stop exercising one. Override with --algorithms / TOKEN_ALGORITHMS.
 ALGORITHMS="${TOKEN_ALGORITHMS:-HS256,EdDSA,ES256,RS256}"
 
-# The Rust CLI under test. Whatever channel installed it (cargo/brew/apt/nix)
-# just has to leave it on PATH; override here to point at a specific build.
+# The Rust CLI under test, as a command prefix. Whatever channel installed it
+# (cargo/brew/apt/nix) just has to leave it on PATH; override here to point at a
+# specific build, e.g. TOKEN_BIN="/path/to/moq auth".
 TOKEN="${TOKEN_BIN:-}"
 
 # The published Docker image for the `rust-docker` cell. Untagged = :latest, the
@@ -117,13 +119,16 @@ trap cleanup EXIT
 have() { command -v "$1" >/dev/null 2>&1; }
 
 resolve_token() {
-    # Prefer the renamed binary, but tolerate channels that still expose the old
-    # executable during rollout. TOKEN_BIN remains authoritative when set.
+    # Prefer the standalone binary while channels still ship it, then fall back to
+    # `moq auth`, which replaced moq-token-cli upstream (moq-dev/moq#3684).
+    # TOKEN_BIN remains authoritative when set.
     [[ -n "$TOKEN" ]] && return 0
     if have moq-token; then
         TOKEN=moq-token
     elif have moq-token-cli; then
         TOKEN=moq-token-cli
+    elif have moq && moq auth --help >/dev/null 2>&1; then
+        TOKEN="moq auth"
     else
         TOKEN=moq-token
     fi
@@ -149,7 +154,7 @@ cli_for() {
     # split is deliberate (runtime + path, or a whole `docker run ...` line), so
     # callers expand it unquoted.
     case "$1" in
-        rust) echo "$TOKEN" ;;
+        rust) echo "$TOKEN" ;; # may be multi-word, e.g. `moq auth`
         # Mount TMP at its real path so the in-container CLI reads/writes the same
         # key/token files token.sh hands it. The image bundles the nix store, so
         # the binary's libiconv deps resolve (the brew bottle's bug doesn't apply).
@@ -227,19 +232,24 @@ verify() {
 }
 
 # ── setup ────────────────────────────────────────────────────────────────────
+rust_probe() {
+    # shellcheck disable=SC2086  # TOKEN is a deliberate command prefix
+    $TOKEN generate --algorithm HS256 --out "$TMP/rust-probe.jwk" >"$TMP/rust-probe.log" 2>&1
+}
+
 "$SMOKE_DIR/freshness.sh" || echo "WARN: freshness check failed (see above); continuing" >&2
 resolve_token
 
 if needs rust; then
-    if ! have "$TOKEN"; then
-        mark_broken rust "$TOKEN not found (cargo/brew/apt/nix install moq-token-cli)"
+    if ! have "${TOKEN%% *}"; then
+        mark_broken rust "$TOKEN not found (install moq-token-cli, or moq-cli >= 0.12 for moq auth)"
     # `have` only checks the file exists; actually run it once, since a broken
     # published binary (e.g. a Homebrew bottle that baked in a /nix/store rpath
     # and aborts on launch) is exactly the packaging failure this test exists to
     # catch. A broken CLI marks the whole rust row unavailable instead of crashing
     # mid-matrix.
-    elif "$TOKEN" generate --algorithm HS256 --out "$TMP/rust-probe.jwk" >"$TMP/rust-probe.log" 2>&1; then
-        echo "rust:    $(command -v "$TOKEN")"
+    elif rust_probe; then
+        echo "rust:    $TOKEN ($(command -v "${TOKEN%% *}"))"
     else
         mark_broken rust "$TOKEN on PATH but won't run (see below)"
         sed 's/^/        /' "$TMP/rust-probe.log" >&2 || true

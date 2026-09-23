@@ -95,6 +95,7 @@ smoke.sh                 orchestrator: relay + media interop matrix
 cloudflare.sh            orchestrator: Cloudflare client through both projects' relays
 moxygen.sh               orchestrator: moxygen protocol client through the moq-dev relay
 smoke.toml               relay config (anonymous, self-signed localhost)
+smoke-legacy.toml        same, pre-0.15 layout; smoke.sh picks it for relays without --listen
 token.sh                 orchestrator: moq-token generate/verify interop matrix
 clients/
   python/smoke.py        publish/subscribe via moq-rs (PyPI)
@@ -123,13 +124,14 @@ published flavours, and this test proves they cross-verify:
 
 | Cell | Source under test | Install |
 |---|---|---|
-| `rust` | the `moq-token` binary (crates.io / Homebrew tap / apt repo / the moq flake) | `cargo install moq-token-cli`, `brew install moq-dev/tap/moq-token-cli`, `apt install`, `nix run github:moq-dev/moq#moq-token-cli` |
+| `rust` | the `moq-token` binary (crates.io / Homebrew tap / apt repo), or `moq auth` from the moq flake | `cargo install moq-token-cli`, `brew install moq-dev/tap/moq-token-cli`, `apt install`, `nix run github:moq-dev/moq#moq-cli -- auth` |
 | `js-node` | npm [`@moq/token`](https://www.npmjs.com/package/@moq/token)'s `moq-token` CLI, run under **node** | `npm i @moq/token` |
 | `js-bun` | the same published npm package, run under **bun** | `npm i @moq/token` |
 | `rust-docker` | the [`moqdev/moq-token-cli`](https://hub.docker.com/r/moqdev/moq-token-cli) Docker Hub image (`:latest`) | `docker run moqdev/moq-token-cli …` |
 
 Like `smoke.sh`, the Rust binary is taken from `PATH` (or `TOKEN_BIN`), preferring
-`moq-token` and falling back to `moq-token-cli` while channels finish the rename;
+`moq-token`, then `moq-token-cli`, then `moq auth` (which replaced
+`moq-token-cli` upstream); `TOKEN_BIN` may be a command prefix like `moq auth`;
 `@moq/token` is installed from npm on each run; `rust-docker` `docker pull`s the
 `moqdev/moq-token-cli`
 image fresh (`:latest`) and runs the CLI in a throwaway container with the scratch
