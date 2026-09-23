@@ -92,7 +92,7 @@ just dev                 # clones github.com/moq-dev/moq (dev)
 
 `smoke.sh` installs the language clients (PyPI / Go proxy / npm) into a scratch dir on each run, so you always test the latest published versions. It does **not** install the Rust binaries; that is the channel under test.
 
-`dev.sh` is the other way around: it builds `moq-relay` from `MOQ_SRC` (or clones `dev`) and resolves `@moq/net`, `@moq/hang`, and `@moq/json` from that checkout's `js/` tree so the contract cases exercise the unpublished surface.
+`dev.sh` is the other way around: it builds `moq-relay` from `MOQ_SRC` (or clones `dev`), runs it with that checkout's own `test/smoke/smoke.toml`, and resolves `@moq/net`, `@moq/hang`, and `@moq/json` from that checkout's `js/` tree so the contract cases exercise the unpublished surface.
 
 ## Layout
 

@@ -2,7 +2,7 @@
 // Models the moq.pro live session (reconnecting handle, URL swap, announce cursor)
 // without copying that app.
 import * as Moq from "@moq/net";
-import { connected, handle, waitActive, waitAnnounce, waitUntil } from "./lib.ts";
+import { connected, handle, REPLAY_MS, waitActive, waitAnnounce, waitUntil } from "./lib.ts";
 
 const PATH = "dev.live";
 
@@ -25,11 +25,17 @@ async function refresh(url: URL): Promise<void> {
 			throw new Error("closed settled before the handle was released");
 		}
 
-		conn.url.set(second);
-		await waitUntil(
-			() => conn.url.peek()?.href === second.href && conn.status.peek() === "connected",
-			"connected at the refreshed URL",
-		);
+		// The swap must tear down the old session and dial again, not just relabel it.
+		let dropped = false;
+		const unsubscribe = conn.status.subscribe((status) => {
+			if (status !== "connected") dropped = true;
+		});
+		try {
+			conn.url.set(second);
+			await waitUntil(() => dropped && conn.status.peek() === "connected", "reconnected at the refreshed URL");
+		} finally {
+			unsubscribe();
+		}
 		if (conn.closed.peek() !== undefined) {
 			throw new Error("closed settled on a URL swap; it is handle disposal, not session end");
 		}
@@ -74,7 +80,7 @@ async function announceAndReplace(url: URL): Promise<void> {
 	}
 }
 
-function publish(origin: Moq.Origin.Producer, path: string, payload: string) {
+function publish(origin: Moq.Origin.Table, path: string, payload: string) {
 	const broadcast = origin.createBroadcast(Moq.Path.from(path));
 	const track = broadcast.createTrack("messages");
 	const group = track.appendGroup();
@@ -85,7 +91,7 @@ function publish(origin: Moq.Origin.Producer, path: string, payload: string) {
 }
 
 async function expectFrame(broadcast: Moq.Broadcast.Consumer, payload: string): Promise<void> {
-	const track = broadcast.track("messages").subscribe({ priority: 0, maxAge: 30_000 });
+	const track = broadcast.track("messages").subscribe({ priority: 0, maxAge: REPLAY_MS });
 	try {
 		const group = await track.recvGroup();
 		if (!group) throw new Error("track ended before a group arrived");

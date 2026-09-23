@@ -10,10 +10,6 @@ const PATH = "dev.stats";
 type Snapshot = { bytes: number };
 type Bucket = { start: number; bytes: number };
 
-function pushedBytes(event: Json.Window.Event<Bucket> | undefined): number | undefined {
-	return event && "push" in event ? event.push.value.bytes : undefined;
-}
-
 export async function stats(url: URL): Promise<void> {
 	const pub = handle(url);
 	const sub = handle(url);
@@ -79,10 +75,19 @@ export async function stats(url: URL): Promise<void> {
 		const lateRollup = new Json.Window.Consumer<Bucket>({
 			track: consumer.track("minute").subscribe({ priority: 0, maxAge: REPLAY_MS }),
 		});
-		const first = await lateRollup.next();
-		const second = pushedBytes(first) === 20 ? first : await lateRollup.next();
-		if (pushedBytes(first) !== 20 && pushedBytes(second) !== 20) {
-			throw new Error(`late window joiner never saw the retained bucket: ${JSON.stringify([first, second])}`);
+		// Replaying the group may restate the popped bucket, but the reconstructed
+		// window must converge to only the retained one.
+		const window = new Map<number, number>();
+		const seen: Json.Window.Event<Bucket>[] = [];
+		while (window.size !== 1 || window.get(1) !== 20) {
+			const event = await lateRollup.next();
+			if (!event) throw new Error(`late window joiner ended at ${JSON.stringify(seen)}`);
+			seen.push(event);
+			if ("push" in event) window.set(event.push.index, event.push.value.bytes);
+			else {
+				const span = "pop" in event ? event.pop : event.skip;
+				for (let i = span.start; i < span.end; i++) window.delete(i);
+			}
 		}
 
 		live.finish();

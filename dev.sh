@@ -97,16 +97,13 @@ echo "ref:      $(git -C "$MOQ_SRC" rev-parse --abbrev-ref HEAD 2>/dev/null || e
 
 RELAY="${RELAY_BIN:-}"
 if [[ -z "$RELAY" ]]; then
-    if [[ -x "$MOQ_SRC/target/debug/moq-relay" ]]; then
-        RELAY="$MOQ_SRC/target/debug/moq-relay"
-    else
-        echo "building moq-relay from source..."
-        (cd "$MOQ_SRC" && cargo build -p moq-relay) >"$TMP/cargo.log" 2>&1 || {
-            sed 's/^/  cargo: /' "$TMP/cargo.log" >&2
-            exit 1
-        }
-        RELAY="$MOQ_SRC/target/debug/moq-relay"
-    fi
+    # Always build: cargo is incremental, and a stale binary would test old relay code.
+    echo "building moq-relay from source..."
+    (cd "$MOQ_SRC" && cargo build -p moq-relay) >"$TMP/cargo.log" 2>&1 || {
+        sed 's/^/  cargo: /' "$TMP/cargo.log" >&2
+        exit 1
+    }
+    RELAY="$MOQ_SRC/target/debug/moq-relay"
 fi
 if [[ ! -x "$RELAY" ]]; then
     echo "error: moq-relay not found at $RELAY" >&2
@@ -152,7 +149,14 @@ if [[ -z "$PORT" ]]; then
 fi
 URL="http://127.0.0.1:${PORT}"
 
-sed "s/4443/${PORT}/g" "$SMOKE_DIR/smoke.toml" >"$TMP/relay.toml"
+# The relay config tracks the source it was built from, so use the checkout's
+# own smoke config rather than ours (which follows the published relay).
+RELAY_TOML="$MOQ_SRC/test/smoke/smoke.toml"
+[[ -f "$RELAY_TOML" ]] || {
+    echo "error: missing $RELAY_TOML" >&2
+    exit 1
+}
+sed "s/4443/${PORT}/g" "$RELAY_TOML" >"$TMP/relay.toml"
 echo "starting relay on 127.0.0.1:${PORT}..."
 "$RELAY" "$TMP/relay.toml" >"$TMP/relay.log" 2>&1 &
 RELAY_PID=$!

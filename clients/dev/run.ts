@@ -2,7 +2,7 @@
 // resolved from a moq checkout, not npm latest.
 import { install } from "@moq/web-transport";
 import { catalog } from "./catalog.ts";
-import { parseUrl } from "./lib.ts";
+import { closeAll, parseUrl } from "./lib.ts";
 import { live } from "./live.ts";
 import { stats } from "./stats.ts";
 
@@ -31,4 +31,6 @@ try {
 	process.exitCode = 1;
 } finally {
 	if (timeoutId !== undefined) clearTimeout(timeoutId);
+	// A timed-out case is still awaiting; release its connections so Bun can exit.
+	closeAll();
 }

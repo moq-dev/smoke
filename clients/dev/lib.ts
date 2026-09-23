@@ -1,7 +1,7 @@
 // Shared helpers for the from-dev API contract cases.
 import * as Moq from "@moq/net";
 
-export const REPLAY_MS = 30_000;
+export const REPLAY_MS = Moq.Time.Milli(30_000);
 
 export function parseUrl(): { url: URL; timeoutMs: number } {
 	const args = process.argv.slice(2);
@@ -11,10 +11,7 @@ export function parseUrl(): { url: URL; timeoutMs: number } {
 		if (args[i] === "--url") url = args[++i];
 		else if (args[i] === "--timeout") timeout = args[++i] ?? timeout;
 	}
-	if (!url) {
-		console.error("usage: run.ts --url URL [--timeout S]");
-		process.exit(2);
-	}
+	if (!url) throw new Error("usage: run.ts --url URL [--timeout S]");
 	return { url: new URL(url), timeoutMs: Number.parseFloat(timeout) * 1000 };
 }
 
@@ -27,7 +24,7 @@ export async function waitUntil(pred: () => boolean, label: string, ms = 10_000)
 	}
 }
 
-export async function connected(conn: Moq.Connection, ms = 10_000): Promise<Moq.Origin.Producer> {
+export async function connected(conn: Moq.Connection, ms = 10_000): Promise<Moq.Origin.Table> {
 	await waitUntil(
 		() => conn.status.peek() === "connected" && conn.origin.peek() !== undefined,
 		"connection established",
@@ -38,10 +35,6 @@ export async function connected(conn: Moq.Connection, ms = 10_000): Promise<Moq.
 	return origin;
 }
 
-export function announcedPath(entry: Moq.Announce.Event): string | undefined {
-	return entry.pattern.isLiteral ? entry.pattern.text : entry.pattern.asPrefix();
-}
-
 export async function waitAnnounce(
 	announced: Moq.Announce.Consumer,
 	path: string,
@@ -50,12 +43,12 @@ export async function waitAnnounce(
 	for (;;) {
 		const entry = await announced.next();
 		if (!entry) throw new Error(`announce stream ended before ${path} ${active ? "appeared" : "retracted"}`);
-		if (announcedPath(entry) === path && entry.active === active) return;
+		if (entry.prefix === path && Moq.Announce.isActive(entry.kind) === active) return;
 	}
 }
 
 export async function waitActive(
-	request: Moq.Origin.Request,
+	request: Moq.Origin.Requesting,
 	label: string,
 	ms = 10_000,
 ): Promise<Moq.Broadcast.Consumer> {
@@ -69,7 +62,17 @@ export function equal(a: unknown, b: unknown): boolean {
 	return JSON.stringify(a) === JSON.stringify(b);
 }
 
+// Every open handle, so a suite timeout can release the ones a stalled case still holds.
+const handles = new Set<Moq.Connection>();
+
 export function handle(url: URL): Moq.Connection {
 	// Private loops so a publisher and a subscriber do not share an origin and skip the relay.
-	return new Moq.Connection({ url, share: false, linger: 0 });
+	const conn = new Moq.Connection({ url, share: false });
+	handles.add(conn);
+	void conn.closed.then(() => handles.delete(conn));
+	return conn;
+}
+
+export function closeAll(): void {
+	for (const conn of handles) conn.close();
 }
