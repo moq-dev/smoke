@@ -218,6 +218,8 @@ jobs:
       # moqdev/moq-cli image. The negative pass inside token.sh confirms each verifier rejects
       # tampered tokens and the wrong key.
       - name: Token interop
+        # Independent of the media matrix, so a red media cell mustn't hide it.
+        if: ${{ !cancelled() }}
         run: |
           # The `rust` impl runs a native `moq auth`, which only the
           # cargo/apt/brew/nix channels install. The docker channel's moq wrapper
