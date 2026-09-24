@@ -54,7 +54,7 @@ The **GStreamer** client downloads the latest `moq-gst` plugin tarball, points `
 The Rust binaries (`moq-relay`, `moq`) ship through five channels that deliver the *same* binaries. CI treats each as a separate test where the OS supports it: Linux exercises **apt**, **cargo**, **nix**, **docker**; macOS exercises **brew**, **cargo**, **nix**. `smoke.sh` itself just takes whatever is on `PATH` (or `RELAY_BIN`/`MOQ_BIN`); the channel is chosen by how the binaries are provided:
 
 - **cargo** / **brew** / **apt** put the binaries on `PATH` (`cargo install moq-relay moq-cli` installs `moq-relay` and `moq`, etc.).
-- **nix** builds them from the moq flake (`just nix-channel`), the same package output `nix run github:moq-dev/moq#moq-cli` resolves. The moq flake is referenced ad-hoc with `--refresh`, so the moq version is always the latest default-branch build, never locked by this repo.
+- **nix** builds them from the moq flake (`just nix-channel`), the same package output `nix run github:moq-dev/moq#moq` resolves. The moq flake is referenced ad-hoc with `--refresh`, so the moq version is always the latest default-branch build, never locked by this repo.
 - **docker** points `RELAY_BIN`/`MOQ_BIN` at the wrapper scripts in [`clients/docker/`](clients/docker), which `docker run --network host` the published [`moqdev/moq-relay`](https://hub.docker.com/r/moqdev/moq-relay) + [`moqdev/moq-cli`](https://hub.docker.com/r/moqdev/moq-cli) images (`:latest`, pulled fresh). Host networking lets the containerised relay bind the ports the orchestrator and the cli containers reach on `127.0.0.1`, so the committed `smoke.toml` works unchanged. Linux-only (a native Docker daemon); the other language clients still install from their own registries, so this run also proves the Docker relay routes between every implementation. Override the runtime with `SMOKE_DOCKER=podman`.
 
 The **browser** client is itself three delivery variants of the *same* page, run as separate matrix cells, to catch breakage specific to how the package is consumed:
@@ -141,7 +141,7 @@ published flavours, and this test proves they cross-verify:
 
 | Cell | Source under test | Install |
 |---|---|---|
-| `rust` | `moq auth` from the `moq` binary (crates.io / Homebrew tap / apt repo / the moq flake) | `cargo install moq-cli`, `brew install moq-dev/tap/moq-cli`, `apt install moq-cli`, `nix run github:moq-dev/moq#moq-cli -- auth` |
+| `rust` | `moq auth` from the `moq` binary (crates.io / Homebrew tap / apt repo / the moq flake) | `cargo install moq-cli`, `brew install moq-dev/tap/moq-cli`, `apt install moq-cli`, `nix run github:moq-dev/moq#moq -- auth` |
 | `js-node` | npm [`@moq/auth`](https://www.npmjs.com/package/@moq/auth)'s `moq-auth` CLI, run under **node** | `npm i @moq/auth` |
 | `js-bun` | the same published npm package, run under **bun** | `npm i @moq/auth` |
 | `rust-docker` | the [`moqdev/moq-cli`](https://hub.docker.com/r/moqdev/moq-cli) Docker Hub image (`:latest`) | `docker run moqdev/moq-cli auth …` |

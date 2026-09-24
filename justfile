@@ -51,7 +51,7 @@ token-full:
     ./token.sh --generators rust,js-node,js-bun,rust-docker --verifiers rust,js-node,js-bun,rust-docker
 
 # The "nix" channel: get moq-relay + moq from the moq flake itself
-# (a public distribution channel, `nix run github:moq-dev/moq#moq-cli`), instead
+# (a public distribution channel, `nix run github:moq-dev/moq#moq`), instead
 # of cargo/brew/apt. Referenced ad-hoc with --refresh so the moq version is the
 # latest default-branch build, never locked by this repo. The devShell only
 # carries client toolchains; moq is built separately here. Override the source
@@ -70,7 +70,7 @@ nix-channel *args:
             --extra-trusted-public-keys "{{ CACHIX_KEY }}" "$1"
     }
     relay=$(nix_build '{{ MOQ_FLAKE }}#moq-relay')
-    cli=$(nix_build '{{ MOQ_FLAKE }}#moq-cli')
+    cli=$(nix_build '{{ MOQ_FLAKE }}#moq')
     echo "relay: $relay"
     echo "cli:   $cli"
     RELAY_BIN="$relay/bin/moq-relay" MOQ_BIN="$cli/bin/moq" ./smoke.sh {{ args }}

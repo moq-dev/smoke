@@ -201,7 +201,7 @@ require_tools() {
     if [[ ${#EXTERNAL_RELAYS[@]} -eq 0 ]]; then
         have "$RELAY" || missing+=("$RELAY (cargo/brew/apt/nix install moq-relay)")
     fi
-    have "$MOQ" || missing+=("moq (cargo/brew/apt/nix install moq-cli)")
+    have "$MOQ" || missing+=("moq (cargo/brew/apt install moq-cli, or nix build github:moq-dev/moq#moq)")
     if [[ ${#missing[@]} -gt 0 ]]; then
         echo "error: missing required tools: ${missing[*]}" >&2
         exit 1
