@@ -88,8 +88,13 @@ in_list() {
 # can list the same URL twice under different transport labels); the transport
 # is taken from the URL scheme rather than the registry's label.
 {
-    jq -r '.implementations | to_entries[] | .key as $k | .value.name as $n |
-        (.value.roles.relay.remote // [])[] | [$k, $n, .url] | @tsv' "$TMP/registry.json"
+    # The registry is third-party data: fall back to the key for a missing name,
+    # and drop entries without a usable URL.
+    jq -r '.implementations | to_entries[] | .key as $k |
+        (.value.name | if type == "string" and . != "" then . else $k end) as $n |
+        (.value.roles.relay.remote // [])[] |
+        select((.url | type) == "string" and (.url | test("^[a-z][a-z0-9+.-]*://"))) |
+        [$k, $n, .url] | @tsv' "$TMP/registry.json"
     printf '%s\n' "${EXTRA_ENDPOINTS[@]}"
 } | awk -F'\t' '!seen[$3]++' >"$TMP/endpoints.tsv"
 
