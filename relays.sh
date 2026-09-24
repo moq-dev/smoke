@@ -17,15 +17,17 @@ SMOKE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REGISTRY="${RELAYS_REGISTRY:-https://raw.githubusercontent.com/englishm/moq-interop-runner/main/implementations.json}"
 REQUIRED="moq-dev-rs"
 ONLY=""
+JSON_OUT=""
 SMOKE_ARGS=()
 
 usage() {
     cat >&2 <<'USAGE'
-usage: relays.sh [--required KEYS] [--only KEYS] [--registry URL|FILE] [smoke.sh flags...]
+usage: relays.sh [--required KEYS] [--only KEYS] [--registry URL|FILE] [--json FILE] [smoke.sh flags...]
 
   --required KEYS   comma-separated registry keys whose relays must pass (default: moq-dev-rs)
   --only KEYS       only test these registry keys (e.g. moq-rs-draft-18,moxygen)
   --registry SRC    implementations.json URL or path (default: moq-interop-runner main)
+  --json FILE       also write the results as JSON (what report/index.html renders)
 
 Any other flag (--publishers, --subscribers, --timeout) is passed to smoke.sh.
 USAGE
@@ -34,12 +36,13 @@ USAGE
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --required | --only | --registry)
+        --required | --only | --registry | --json)
             [[ $# -ge 2 && "$2" != -* ]] || usage
             case "$1" in
                 --required) REQUIRED="$2" ;;
                 --only) ONLY="$2" ;;
                 --registry) REGISTRY="$2" ;;
+                --json) JSON_OUT="$2" ;;
             esac
             shift 2
             ;;
@@ -111,57 +114,63 @@ if [[ ! -s "$TMP/results.tsv" ]]; then
 fi
 
 # ── summary ─────────────────────────────────────────────────────────────────
-# A markdown table (one row per endpoint, one column per publisher -> subscriber
-# pair), printed and appended to the GitHub job summary when running in CI.
-# An endpoint passes when at least one cell passed and none failed, so one that
-# never reported (smoke.sh died mid-run) counts as failing.
-summary="$TMP/summary.md"
-failed_required=$(
-    awk -F'\t' -v required="$REQUIRED" -v out="$summary" '
-    function icon(s) { return s == "PASS" ? "✅" : s == "FAIL" ? "❌" : s == "SKIP" ? "➖" : " " }
-    function scheme(u) { return u ~ /^moqt:/ ? "QUIC" : "WebTransport" }
-    BEGIN { n = split(required, r, ","); for (i = 1; i <= n; i++) req[r[i]] = 1 }
-    FNR == NR {
-        # selected.tsv: key, name, url (registry order)
-        key[$3] = $1; name[$3] = $2; urls[++nurl] = $3
-        next
-    }
+# results.json is the source of truth: one entry per endpoint (registry order),
+# one cell per publisher -> subscriber pair with its status and the wire version
+# each side negotiated. The markdown table below and report/index.html both
+# render it. An endpoint passes when at least one cell passed and none failed,
+# so one that never reported (smoke.sh died mid-run) counts as failing.
+run_url=""
+if [[ -n "${GITHUB_RUN_ID:-}" ]]; then
+    run_url="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+fi
+jq -n --rawfile selected "$TMP/selected.tsv" --rawfile results "$TMP/results.tsv" \
+    --arg required "$REQUIRED" --arg registry "$REGISTRY" --arg run_url "$run_url" \
+    --arg generated "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+    def rows(s): s | split("\n") | map(select(length > 0) | split("\t"));
+    def pair: .[1] + " → " + .[2];
+    rows($results) as $cells | ($required | split(",")) as $req |
     {
-        url = $1; pair = $2 " → " $3
-        if (!(pair in pseen)) { pseen[pair] = 1; pairs[++npair] = pair }
-        cell[url, pair] = $4
-        if ($4 == "PASS") pass[url] = 1
-        if ($4 == "FAIL") fail[url] = 1
-    }
-    END {
-        print "## External relay interop\n" > out
-        header = "| Relay | Transport | Endpoint | Gate |"; sep = "|---|---|---|---|"
-        for (p = 1; p <= npair; p++) { header = header " " pairs[p] " |"; sep = sep "---|" }
-        print header > out; print sep > out
-        for (u = 1; u <= nurl; u++) {
-            url = urls[u]; k = key[url]
-            ok = (url in pass) && !(url in fail)
-            gate = (k in req) ? "required" : "optional"
-            if (gate == "required") { rtotal++; if (ok) rpass++; else bad = bad " " url }
-            else { ototal++; if (ok) opass++ }
-            row = "| " name[url] " (`" k "`) | " scheme(url) " | `" url "` | " gate " |"
-            for (p = 1; p <= npair; p++) row = row " " icon(cell[url, pairs[p]]) " |"
-            print row > out
-        }
-        printf "\nRequired: %d/%d endpoints passing. Optional: %d/%d endpoints passing.\n", rpass, rtotal, opass, ototal > out
-        print "✅ bytes flowed · ❌ no data / error · ➖ skipped (client can'"'"'t dial that transport)" > out
-        print bad
-    }' "$TMP/selected.tsv" "$TMP/results.tsv"
-)
+        generated: $generated,
+        run_url: (if $run_url == "" then null else $run_url end),
+        registry: $registry,
+        pairs: (reduce ($cells[] | pair) as $p ([]; if any(.[]; . == $p) then . else . + [$p] end)),
+        endpoints: [rows($selected)[] as [$key, $name, $url] |
+            [$cells[] | select(.[0] == $url)] as $mine | {
+                key: $key,
+                name: $name,
+                url: $url,
+                transport: (if $url | startswith("moqt:") then "QUIC" else "WebTransport" end),
+                required: any($req[]; . == $key),
+                ok: (any($mine[]; .[3] == "PASS") and all($mine[]; .[3] != "FAIL")),
+                versions: ([$mine[] | .[4], .[5]] | map(select(. != null and . != "")) | unique),
+                cells: ($mine | map({key: pair, value: {status: .[3], pub_version: (.[4] // ""), sub_version: (.[5] // "")}}) | from_entries)
+            }]
+    }' >"$TMP/results.json"
+[[ -n "$JSON_OUT" ]] && cp "$TMP/results.json" "$JSON_OUT"
+
+jq -r '
+    def icon: if . == "PASS" then "✅" elif . == "FAIL" then "❌" elif . == "SKIP" then "➖" else " " end;
+    .pairs as $pairs |
+    [.endpoints[] | select(.required)] as $req | [.endpoints[] | select(.required | not)] as $opt |
+    "## External relay interop\n",
+    "| Relay | Transport | Endpoint | Gate | Version | " + ($pairs | join(" | ")) + " |",
+    "|---|---|---|---|---|" + ($pairs | map("---|") | join("")),
+    (.endpoints[] | . as $e |
+        "| \(.name) (`\(.key)`) | \(.transport) | `\(.url)` | \(if .required then "required" else "optional" end) | \(.versions | join(", ")) | "
+        + ($pairs | map($e.cells[.].status // "" | icon) | join(" | ")) + " |"),
+    "\nRequired: \([$req[] | select(.ok)] | length)/\($req | length) endpoints passing. Optional: \([$opt[] | select(.ok)] | length)/\($opt | length) endpoints passing.",
+    "✅ bytes flowed · ❌ no data / error · ➖ skipped (client can'"'"'t dial that transport)"
+' "$TMP/results.json" >"$TMP/summary.md"
 
 echo
-cat "$summary"
+cat "$TMP/summary.md"
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
-    cat "$summary" >>"$GITHUB_STEP_SUMMARY"
+    cat "$TMP/summary.md" >>"$GITHUB_STEP_SUMMARY"
 fi
 
-if [[ -n "${failed_required// /}" ]]; then
-    echo "relays: required relay(s) failed:$failed_required" >&2
+failed_required=$(jq -r '[.endpoints[] | select(.required and (.ok | not)) | .url] | join(" ")' "$TMP/results.json")
+if [[ -n "$failed_required" ]]; then
+    echo "relays: required relay(s) failed: $failed_required" >&2
     exit 1
 fi
 echo "relays: all required relays passed"

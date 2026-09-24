@@ -696,8 +696,9 @@ run_subscriber() {
             # moq only handles SIGINT, so -k forces SIGKILL if it ignores the
             # SIGTERM that fires when no data arrives within the timeout.
             local n
+            # stderr stays in the cell log: it names the negotiated version.
             n=$(timeout -k 3 "$TIMEOUT" "$MOQ" "$MOQ_CONNECT" "$URL" --broadcast "$broadcast" \
-                export fmp4 2>/dev/null | head -c 1 | wc -c | tr -d ' ' || true)
+                export fmp4 | head -c 1 | wc -c | tr -d ' ' || true)
             [[ "${n:-0}" -ge 1 ]]
             ;;
         python)
@@ -780,13 +781,31 @@ run_subscriber() {
 # ── matrix ──────────────────────────────────────────────────────────────────
 overall=0
 
+negotiated() {
+    # negotiated <log>: the wire version a client reported, or nothing. The Rust
+    # clients log `connected version=moq-transport-18`; the browser page logs the
+    # WebTransport subprotocol it was handed (see clients/js/jsdelivr/setup.js),
+    # whose `moqt-16` ALPN spelling is normalized to match.
+    [[ -f "$1" ]] || return 0
+    sed 's/\x1b\[[0-9;]*m//g' "$1" |
+        grep -oE 'connected version=[^ ]+|negotiated protocol: [^ ]+' | tail -1 |
+        sed -E 's/.*(=|: )//; s/^moqt-/moq-transport-/' || true
+}
+
 record() {
-    # record <pub> <sub> <PASS|FAIL|SKIP>: print the cell and, with --results,
-    # append it as a TSV row keyed by the relay URL (relays.sh summarises these).
-    local pub="$1" sub="$2" status="$3" note="${4:-}"
-    echo "  $status  $pub -> $sub${note:+ ($note)}"
+    # record <pub> <sub> <PASS|FAIL|SKIP> [note]: print the cell and, with
+    # --results, append a TSV row (relay, pub, sub, status, pub version, sub
+    # version) keyed by the relay URL; relays.sh summarises these.
+    local pub="$1" sub="$2" status="$3" note="${4:-}" pub_ver="" sub_ver=""
+    if [[ "$status" != SKIP ]]; then
+        pub_ver=$(negotiated "$TMP/pub-$pub.log")
+        sub_ver=$(negotiated "$TMP/$pub-$sub.log")
+    fi
+    echo "  $status  $pub -> $sub${note:+ ($note)}${sub_ver:+ [$sub_ver]}"
     [[ "$status" == FAIL ]] && overall=1
-    [[ -n "$RESULTS" ]] && printf '%s\t%s\t%s\t%s\n' "$URL" "$pub" "$sub" "$status" >>"$RESULTS"
+    if [[ -n "$RESULTS" ]]; then
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$URL" "$pub" "$sub" "$status" "$pub_ver" "$sub_ver" >>"$RESULTS"
+    fi
     return 0
 }
 

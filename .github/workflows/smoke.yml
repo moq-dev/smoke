@@ -278,7 +278,37 @@ jobs:
       # summary table as optional. Rust (moq-native) and the browser (@moq/net)
       # are the two independent client stacks, so both publish and subscribe.
       - name: External relay interop
-        run: ./relays.sh --publishers rust,js-vite --subscribers rust,js-vite --timeout 30
+        run: ./relays.sh --publishers rust,js-vite --subscribers rust,js-vite --timeout 30 --json results.json
+
+      # The HTML report (report/index.html) on GitHub Pages. Built even when a
+      # required relay failed, since that's exactly the run worth looking at.
+      # History carries forward from the currently deployed site.
+      - name: Build report
+        if: ${{ !cancelled() && hashFiles('results.json') != '' }}
+        run: |
+          owner="${GITHUB_REPOSITORY%%/*}"
+          report/build.sh results.json _site "https://${owner}.github.io/${GITHUB_REPOSITORY#*/}/history.json"
+
+      - name: Upload report
+        if: ${{ !cancelled() && hashFiles('_site/index.html') != '' }}
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+
+  # Publish the relay report from main only (nightly or on demand), never from a PR.
+  relays-report:
+    name: Publish relay report
+    needs: relays
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
 
   cloudflare:
     name: Cloudflare interoperability
