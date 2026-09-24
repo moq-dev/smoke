@@ -12,6 +12,10 @@
 # H.264 broadcast and confirms every subscriber sees data flowing (a non-empty
 # frame before the timeout). We check that bytes move end-to-end across
 # implementations, not that H.264 decodes.
+#
+# With --relay URL (repeatable) it skips the local relay and runs the same matrix
+# through each external relay instead; relays.sh drives that mode against the
+# public relays in the moq-interop-runner registry.
 set -euo pipefail
 
 SMOKE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -25,6 +29,8 @@ SIZE="${SMOKE_SIZE:-320x240}"
 PORT="${SMOKE_PORT:-4443}"
 URL="http://127.0.0.1:${PORT}"
 NEGATIVE=0
+EXTERNAL_RELAYS=() # --relay URLs; empty means stand up the local moq-relay
+RESULTS=""         # --results FILE: append one TSV row per cell (relay pub sub status)
 
 # Binaries under test. Whatever channel installed them (cargo/brew/apt) just has
 # to leave them on PATH; override here to point at a specific build.
@@ -67,6 +73,16 @@ while [[ $# -gt 0 ]]; do
         --negative)
             NEGATIVE=1
             shift
+            ;;
+        --relay)
+            require_value "$@"
+            EXTERNAL_RELAYS+=("$2")
+            shift 2
+            ;;
+        --results)
+            require_value "$@"
+            RESULTS="$2"
+            shift 2
             ;;
         *)
             echo "unknown arg: $1" >&2
@@ -182,7 +198,9 @@ require_tools() {
     for t in ffmpeg curl pgrep timeout; do
         have "$t" || missing+=("$t")
     done
-    have "$RELAY" || missing+=("$RELAY (cargo/brew/apt/nix install moq-relay)")
+    if [[ ${#EXTERNAL_RELAYS[@]} -eq 0 ]]; then
+        have "$RELAY" || missing+=("$RELAY (cargo/brew/apt/nix install moq-relay)")
+    fi
     have "$MOQ" || missing+=("moq (cargo/brew/apt/nix install moq-cli)")
     if [[ ${#missing[@]} -gt 0 ]]; then
         echo "error: missing required tools: ${missing[*]}" >&2
@@ -425,7 +443,11 @@ require_tools
 # matrix still runs; `just freshness` / CI enforce it hard.
 "$SMOKE_DIR/freshness.sh" || echo "WARN: freshness check failed (see above); continuing" >&2
 
-echo "relay:   $(command -v "$RELAY")"
+if [[ ${#EXTERNAL_RELAYS[@]} -eq 0 ]]; then
+    echo "relay:   $(command -v "$RELAY")"
+else
+    echo "relays:  ${EXTERNAL_RELAYS[*]}"
+fi
 echo "moq:     $(command -v "$MOQ")"
 
 # moq-cli 0.12 renamed --client-connect to --connect and rejects the old name.
@@ -583,40 +605,42 @@ if needs gst; then
     fi
 fi
 
-# A relay from a previous run in the same job is reaped by cleanup(), but the
-# kernel can take a moment to release the (host-network) socket afterwards, so
-# wait briefly for the port to clear before treating it as a real conflict.
-for _ in $(seq 1 20); do
-    curl -sf "$URL/certificate.sha256" >/dev/null 2>&1 || break
-    sleep 0.5
-done
-if curl -sf "$URL/certificate.sha256" >/dev/null 2>&1; then
-    echo "error: something is already listening on 127.0.0.1:4443 (stale relay?)" >&2
-    exit 1
-fi
+if [[ ${#EXTERNAL_RELAYS[@]} -eq 0 ]]; then
+    # A relay from a previous run in the same job is reaped by cleanup(), but the
+    # kernel can take a moment to release the (host-network) socket afterwards, so
+    # wait briefly for the port to clear before treating it as a real conflict.
+    for _ in $(seq 1 20); do
+        curl -sf "$URL/certificate.sha256" >/dev/null 2>&1 || break
+        sleep 0.5
+    done
+    if curl -sf "$URL/certificate.sha256" >/dev/null 2>&1; then
+        echo "error: something is already listening on 127.0.0.1:4443 (stale relay?)" >&2
+        exit 1
+    fi
 
-echo "starting relay on 127.0.0.1:${PORT}..."
-# smoke.toml is the source of truth; rewrite its port into a scratch copy so a
-# busy 4443 (a dev relay, a parallel run) doesn't require editing the committed file.
-# Relays before 0.15 (no --listen flag) reject the renamed keys, so they get the
-# legacy layout until every channel ships 0.15.
-relay_config="$SMOKE_DIR/smoke.toml"
-relay_help=$("$RELAY" --help 2>&1 || true)
-if ! grep -q -- '--listen\b' <<<"$relay_help"; then
-    relay_config="$SMOKE_DIR/smoke-legacy.toml"
-fi
-echo "relay config: $(basename "$relay_config")"
-sed "s/4443/${PORT}/g" "$relay_config" >"$TMP/relay.toml"
-"$RELAY" "$TMP/relay.toml" >"$TMP/relay.log" 2>&1 &
-RELAY_PID=$!
-for _ in $(seq 1 60); do
-    curl -sf "$URL/certificate.sha256" >/dev/null 2>&1 && break
-    sleep 0.5
-done
-if ! curl -sf "$URL/certificate.sha256" >/dev/null 2>&1; then
-    echo "relay never became ready" >&2
-    sed 's/^/  relay: /' "$TMP/relay.log" >&2 || true
-    exit 1
+    echo "starting relay on 127.0.0.1:${PORT}..."
+    # smoke.toml is the source of truth; rewrite its port into a scratch copy so a
+    # busy 4443 (a dev relay, a parallel run) doesn't require editing the committed file.
+    # Relays before 0.15 (no --listen flag) reject the renamed keys, so they get the
+    # legacy layout until every channel ships 0.15.
+    relay_config="$SMOKE_DIR/smoke.toml"
+    relay_help=$("$RELAY" --help 2>&1 || true)
+    if ! grep -q -- '--listen\b' <<<"$relay_help"; then
+        relay_config="$SMOKE_DIR/smoke-legacy.toml"
+    fi
+    echo "relay config: $(basename "$relay_config")"
+    sed "s/4443/${PORT}/g" "$relay_config" >"$TMP/relay.toml"
+    "$RELAY" "$TMP/relay.toml" >"$TMP/relay.log" 2>&1 &
+    RELAY_PID=$!
+    for _ in $(seq 1 60); do
+        curl -sf "$URL/certificate.sha256" >/dev/null 2>&1 && break
+        sleep 0.5
+    done
+    if ! curl -sf "$URL/certificate.sha256" >/dev/null 2>&1; then
+        echo "relay never became ready" >&2
+        sed 's/^/  relay: /' "$TMP/relay.log" >&2 || true
+        exit 1
+    fi
 fi
 
 # ── client dispatch ─────────────────────────────────────────────────────────
@@ -756,18 +780,41 @@ run_subscriber() {
 # ── matrix ──────────────────────────────────────────────────────────────────
 overall=0
 
+record() {
+    # record <pub> <sub> <PASS|FAIL|SKIP>: print the cell and, with --results,
+    # append it as a TSV row keyed by the relay URL (relays.sh summarises these).
+    local pub="$1" sub="$2" status="$3" note="${4:-}"
+    echo "  $status  $pub -> $sub${note:+ ($note)}"
+    [[ "$status" == FAIL ]] && overall=1
+    [[ -n "$RESULTS" ]] && printf '%s\t%s\t%s\t%s\n' "$URL" "$pub" "$sub" "$status" >>"$RESULTS"
+    return 0
+}
+
+reaches() {
+    # reaches <lang>: can this client dial $URL at all? The JS clients speak
+    # WebTransport (a browser, or the polyfill), so a raw-QUIC moqt:// endpoint
+    # is out of reach for them; that's a SKIP, not an interop failure.
+    case "$1" in
+        js-*) [[ "$URL" != moqt://* ]] ;;
+        *) return 0 ;;
+    esac
+}
+
 run_round() {
     local pub="$1" broadcast="$2" pub_pid="$3"
+    # pids[i] is the subscriber's PID, or "STATUS:note" for a cell decided
+    # without running it; either way cells are reported in --subscribers order.
     local pids=() names=() i sub
     for sub in "${SUB_LIST[@]}"; do
-        if is_broken "$sub"; then
-            echo "  FAIL  $pub -> $sub (subscriber client unavailable)"
-            overall=1
-            continue
-        fi
-        (run_subscriber "$sub" "$broadcast") >"$TMP/$pub-$sub.log" 2>&1 &
-        pids+=("$!")
         names+=("$sub")
+        if ! reaches "$sub"; then
+            pids+=("SKIP:subscriber can't dial $URL")
+        elif is_broken "$sub"; then
+            pids+=("FAIL:subscriber client unavailable")
+        else
+            (run_subscriber "$sub" "$broadcast") >"$TMP/$pub-$sub.log" 2>&1 &
+            pids+=("$!")
+        fi
     done
     # A publisher that streams forever should still be alive; if it died, the
     # subscriber failures below are a publisher bug, so surface its log.
@@ -777,16 +824,19 @@ run_round() {
     fi
     local want_pass=1 got
     [[ "$NEGATIVE" -eq 1 ]] && want_pass=0
-    # ${arr[@]+...} guard: a round may have no live subscribers (all broken),
+    # ${arr[@]+...} guard: --subscribers may be empty,
     # and bash 3.2 (macOS) errors on "${!pids[@]}" for an empty array under `set -u`.
     for i in ${pids[@]+"${!pids[@]}"}; do
+        if [[ "${pids[$i]}" == *:* ]]; then
+            record "$pub" "${names[$i]}" "${pids[$i]%%:*}" "${pids[$i]#*:}"
+            continue
+        fi
         if wait "${pids[$i]}"; then got=1; else got=0; fi
         if [[ "$got" -eq "$want_pass" ]]; then
-            echo "  PASS  $pub -> ${names[$i]}"
+            record "$pub" "${names[$i]}" PASS
         else
-            echo "  FAIL  $pub -> ${names[$i]}"
+            record "$pub" "${names[$i]}" FAIL
             sed 's/^/        /' "$TMP/$pub-${names[$i]}.log" 2>/dev/null || true
-            overall=1
         fi
     done
     if [[ -n "$pub_pid" ]]; then
@@ -798,24 +848,37 @@ run_round() {
     return 0
 }
 
-if [[ "$NEGATIVE" -eq 1 ]]; then
-    # Negative control: no publisher. Every subscriber must FAIL (time out with
-    # no data), proving the harness can actually report failure.
-    echo "=== negative control: subscribers expect NO data ==="
-    run_round "none" "smoke-missing-$$-$RANDOM.hang" ""
-else
+run_matrix() {
+    local pub sub broadcast
+    if [[ "$NEGATIVE" -eq 1 ]]; then
+        # Negative control: no publisher. Every subscriber must FAIL (time out with
+        # no data), proving the harness can actually report failure.
+        echo "=== negative control: subscribers expect NO data ==="
+        run_round "none" "smoke-missing-$$-$RANDOM.hang" ""
+        return
+    fi
     for pub in "${PUB_LIST[@]}"; do
         broadcast="smoke-${pub}-$$-${RANDOM}.hang"
         echo "=== publisher: $pub  broadcast: $broadcast ==="
+        if ! reaches "$pub"; then
+            for sub in "${SUB_LIST[@]}"; do record "$pub" "$sub" SKIP "publisher can't dial $URL"; done
+            continue
+        fi
         if is_broken "$pub"; then
-            for sub in "${SUB_LIST[@]}"; do
-                echo "  FAIL  $pub -> $sub (publisher client unavailable)"
-            done
-            overall=1
+            for sub in "${SUB_LIST[@]}"; do record "$pub" "$sub" FAIL "publisher client unavailable"; done
             continue
         fi
         start_publisher "$pub" "$broadcast"
         run_round "$pub" "$broadcast" "$PUB_PID"
+    done
+}
+
+if [[ ${#EXTERNAL_RELAYS[@]} -eq 0 ]]; then
+    run_matrix
+else
+    for URL in "${EXTERNAL_RELAYS[@]}"; do
+        echo "##### relay: $URL #####"
+        run_matrix
     done
 fi
 

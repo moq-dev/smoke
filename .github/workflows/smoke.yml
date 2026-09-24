@@ -235,6 +235,51 @@ jobs:
           fi
           ./token.sh --generators "$impls" --verifiers "$impls"
 
+  relays:
+    name: External relay interop
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # ~20 public endpoints x 2 publishers, each bounded by --timeout.
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: System deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg curl procps coreutils jq
+
+      # apt is the quickest channel to install; the relay binary isn't needed
+      # because every endpoint is remote.
+      - name: Install moq CLI (apt)
+        run: |
+          curl -fsSL https://apt.moq.dev/moq-keyring.gpg \
+            | sudo tee /usr/share/keyrings/moq-keyring.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/moq-keyring.gpg] https://apt.moq.dev stable main" \
+            | sudo tee /etc/apt/sources.list.d/moq.list
+          sudo apt-get update
+          sudo apt-get install -y moq-cli
+
+      - name: Playwright system deps
+        run: |
+          cd clients/js
+          bun install
+          bunx playwright install-deps chromium
+
+      # The relay list comes live from the moq-interop-runner registry. Only
+      # moq-dev's own relay gates the job; every other endpoint lands in the job
+      # summary table as optional. Rust (moq-native) and the browser (@moq/net)
+      # are the two independent client stacks, so both publish and subscribe.
+      - name: External relay interop
+        run: ./relays.sh --publishers rust,js-vite --subscribers rust,js-vite --timeout 30
+
   cloudflare:
     name: Cloudflare interoperability
     runs-on: ubuntu-latest
