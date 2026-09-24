@@ -898,6 +898,9 @@ else
     for URL in "${EXTERNAL_RELAYS[@]}"; do
         echo "##### relay: $URL #####"
         run_matrix
+        # Completion marker: lets relays.sh tell a finished matrix from one cut
+        # short after its first cells.
+        if [[ -n "$RESULTS" ]]; then printf '%s\tDONE\n' "$URL" >>"$RESULTS"; fi
     done
 fi
 

@@ -117,8 +117,9 @@ fi
 # results.json is the source of truth: one entry per endpoint (registry order),
 # one cell per publisher -> subscriber pair with its status and the wire version
 # each side negotiated. The markdown table below and report/index.html both
-# render it. An endpoint passes when at least one cell passed and none failed,
-# so one that never reported (smoke.sh died mid-run) counts as failing.
+# render it. An endpoint passes when its matrix completed (smoke.sh's DONE
+# marker), at least one cell passed, and none failed; so one cut short or never
+# reached (smoke.sh died mid-run) counts as failing.
 run_url=""
 if [[ -n "${GITHUB_RUN_ID:-}" ]]; then
     run_url="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
@@ -128,7 +129,8 @@ jq -n --rawfile selected "$TMP/selected.tsv" --rawfile results "$TMP/results.tsv
     --arg generated "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
     def rows(s): s | split("\n") | map(select(length > 0) | split("\t"));
     def pair: .[1] + " → " + .[2];
-    rows($results) as $cells | ($required | split(",")) as $req |
+    rows($results) as $rows | [$rows[] | select(length > 2)] as $cells |
+    [$rows[] | select(.[1] == "DONE") | .[0]] as $done | ($required | split(",")) as $req |
     {
         generated: $generated,
         run_url: (if $run_url == "" then null else $run_url end),
@@ -141,7 +143,7 @@ jq -n --rawfile selected "$TMP/selected.tsv" --rawfile results "$TMP/results.tsv
                 url: $url,
                 transport: (if $url | startswith("moqt:") then "QUIC" else "WebTransport" end),
                 required: any($req[]; . == $key),
-                ok: (any($mine[]; .[3] == "PASS") and all($mine[]; .[3] != "FAIL")),
+                ok: (any($done[]; . == $url) and any($mine[]; .[3] == "PASS") and all($mine[]; .[3] != "FAIL")),
                 versions: ([$mine[] | .[4], .[5]] | map(select(. != null and . != "")) | unique),
                 cells: ($mine | map({key: pair, value: {status: .[3], pub_version: (.[4] // ""), sub_version: (.[5] // "")}}) | from_entries)
             }]
