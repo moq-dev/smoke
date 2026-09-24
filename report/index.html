@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MoQ Relay Interop</title>
+<meta name="description" content="Nightly publish/subscribe results for the published moq clients through public MoQ relays.">
+<!--
+  Rendered from results.json (latest run) and history.json (recent runs), both
+  written next to this page by report/build.sh. No build step, no dependencies.
+-->
+<style>
+:root {
+	--bg: #fbfbfa;
+	--fg: #1c1c1a;
+	--muted: #6b6b66;
+	--line: #e3e2de;
+	--card: #ffffff;
+	--pass: #1a7f37;
+	--fail: #c9302c;
+	--skip: #a8a8a2;
+	--tag: #efeee9;
+	color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme="light"]) {
+		--bg: #141413;
+		--fg: #ecebe6;
+		--muted: #9a9a93;
+		--line: #2c2c29;
+		--card: #1c1c1a;
+		--pass: #4ac26b;
+		--fail: #f47067;
+		--skip: #5f5f59;
+		--tag: #2a2a27;
+		color-scheme: dark;
+	}
+}
+:root[data-theme="dark"] {
+	--bg: #141413;
+	--fg: #ecebe6;
+	--muted: #9a9a93;
+	--line: #2c2c29;
+	--card: #1c1c1a;
+	--pass: #4ac26b;
+	--fail: #f47067;
+	--skip: #5f5f59;
+	--tag: #2a2a27;
+	color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--fg);
+	font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main { max-width: 1100px; margin: 0 auto; padding: 32px 16px 64px; }
+h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: -0.01em; }
+h2 { font-size: 16px; margin: 40px 0 12px; }
+p { margin: 0 0 8px; }
+a { color: inherit; }
+.muted { color: var(--muted); }
+.meta { color: var(--muted); font-size: 13px; }
+.stats { display: flex; gap: 12px; flex-wrap: wrap; margin: 20px 0 8px; }
+.stat {
+	background: var(--card);
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	padding: 10px 14px;
+	flex: 1 1 160px;
+	max-width: 240px;
+}
+.stat b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+.stat span { color: var(--muted); font-size: 13px; }
+.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+th { font-weight: 600; font-size: 12px; color: var(--muted); }
+td.cell { text-align: center; font-size: 16px; font-weight: 600; }
+code { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
+.name { font-weight: 600; }
+.tag {
+	display: inline-block;
+	font-size: 11px;
+	padding: 1px 6px;
+	border-radius: 4px;
+	background: var(--tag);
+	color: var(--muted);
+	margin-left: 6px;
+	vertical-align: 1px;
+}
+.tag.required { color: var(--fg); }
+.ver { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.PASS { color: var(--pass); }
+.FAIL { color: var(--fail); }
+.SKIP { color: var(--skip); }
+tr.ok td:first-child { box-shadow: inset 3px 0 0 var(--pass); }
+tr.bad td:first-child { box-shadow: inset 3px 0 0 var(--fail); }
+.dots { display: flex; gap: 3px; }
+.dot { width: 10px; height: 18px; border-radius: 2px; background: var(--skip); opacity: 0.35; }
+.dot.ok { background: var(--pass); opacity: 1; }
+.dot.bad { background: var(--fail); opacity: 1; }
+.dot.none { background: transparent; border: 1px dashed var(--line); opacity: 1; }
+.legend { margin-top: 10px; font-size: 13px; color: var(--muted); }
+#error { color: var(--fail); }
+</style>
+</head>
+<body>
+<main>
+	<h1>MoQ relay interop</h1>
+	<p class="muted">
+		The published <a href="https://github.com/moq-dev/moq">moq</a> clients publish an H.264 broadcast and subscribe to it
+		through each public relay in the
+		<a href="https://github.com/englishm/moq-interop-runner">moq-interop-runner</a> registry.
+		A cell passes when media bytes arrive at the subscriber. Only required relays can fail the
+		<a href="https://github.com/moq-dev/smoke">smoke</a> run.
+	</p>
+	<p class="meta" id="meta">Loading…</p>
+	<p id="error"></p>
+
+	<div class="stats" id="stats"></div>
+
+	<h2>Latest run</h2>
+	<div class="scroll"><table id="latest"></table></div>
+	<p class="legend">
+		<span class="PASS">✓</span> bytes flowed &nbsp;·&nbsp;
+		<span class="FAIL">✗</span> no data or error &nbsp;·&nbsp;
+		<span class="SKIP">–</span> client can't dial that transport (browser → raw QUIC).
+		Version is what each client negotiated with the relay; hover a cell for publisher/subscriber detail.
+	</p>
+
+	<h2>History</h2>
+	<div class="scroll"><table id="history"></table></div>
+	<p class="legend">One bar per nightly run, oldest to newest. Click a bar to open that CI run.</p>
+</main>
+<script>
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+const mark = { PASS: "✓", FAIL: "✗", SKIP: "–" };
+
+async function load(path) {
+	const res = await fetch(path, { cache: "no-store" });
+	if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
+	return res.json();
+}
+
+function renderLatest(r) {
+	const run = r.run_url ? ` · <a href="${esc(r.run_url)}">CI run</a>` : "";
+	document.getElementById("meta").innerHTML = `Last run ${esc(when(r.generated))}${run}`;
+
+	const req = r.endpoints.filter((e) => e.required);
+	const opt = r.endpoints.filter((e) => !e.required);
+	const count = (xs) => `${xs.filter((e) => e.ok).length}/${xs.length}`;
+	const relays = new Set(r.endpoints.filter((e) => e.ok).map((e) => e.key)).size;
+	document.getElementById("stats").innerHTML = [
+		[count(req), "required endpoints passing"],
+		[count(opt), "optional endpoints passing"],
+		[`${relays}/${new Set(r.endpoints.map((e) => e.key)).size}`, "relays with a passing endpoint"],
+	].map(([n, l]) => `<div class="stat"><b>${esc(n)}</b><span>${esc(l)}</span></div>`).join("");
+
+	const head = `<tr><th>Relay</th><th>Transport</th><th>Version</th>${r.pairs.map((p) => `<th>${esc(p)}</th>`).join("")}</tr>`;
+	const rows = r.endpoints.map((e) => {
+		const cells = r.pairs.map((p) => {
+			const c = e.cells[p];
+			if (!c) return `<td class="cell muted">·</td>`;
+			const tip = [c.status, c.pub_version && `publisher: ${c.pub_version}`, c.sub_version && `subscriber: ${c.sub_version}`].filter(Boolean).join("\n");
+			return `<td class="cell ${esc(c.status)}" title="${esc(tip)}">${mark[c.status] ?? esc(c.status)}</td>`;
+		}).join("");
+		const tag = e.required ? `<span class="tag required">required</span>` : "";
+		return `<tr class="${e.ok ? "ok" : "bad"}">
+			<td><span class="name">${esc(e.name)}</span>${tag}<br><code>${esc(e.url)}</code></td>
+			<td>${esc(e.transport)}</td>
+			<td class="ver">${e.versions.length ? e.versions.map(esc).join("<br>") : `<span class="muted">—</span>`}</td>
+			${cells}</tr>`;
+	}).join("");
+	document.getElementById("latest").innerHTML = head + rows;
+}
+
+function renderHistory(latest, history) {
+	const runs = history.slice(-30);
+	const head = `<tr><th>Relay</th><th>Last ${runs.length} runs</th></tr>`;
+	const rows = latest.endpoints.map((e) => {
+		const dots = runs.map((run) => {
+			const h = run.endpoints[e.url];
+			const cls = !h ? "none" : h.ok ? "ok" : "bad";
+			const tip = `${when(run.generated)}: ${!h ? "not tested" : h.ok ? "pass" : "fail"}${h?.versions?.length ? ` (${h.versions.join(", ")})` : ""}`;
+			const dot = `<span class="dot ${cls}" title="${esc(tip)}"></span>`;
+			return run.run_url ? `<a href="${esc(run.run_url)}">${dot}</a>` : dot;
+		}).join("");
+		return `<tr><td><span class="name">${esc(e.name)}</span> <span class="muted">${esc(e.transport)}</span></td><td><div class="dots">${dots}</div></td></tr>`;
+	}).join("");
+	document.getElementById("history").innerHTML = head + rows;
+}
+
+(async () => {
+	try {
+		const latest = await load("results.json");
+		renderLatest(latest);
+		const history = await load("history.json").catch(() => []);
+		renderHistory(latest, history);
+	} catch (err) {
+		document.getElementById("meta").textContent = "";
+		document.getElementById("error").textContent = `Failed to load results: ${err.message}`;
+	}
+})();
+</script>
+</body>
+</html>

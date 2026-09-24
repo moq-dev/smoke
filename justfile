@@ -30,6 +30,13 @@ cloudflare:
 moxygen:
     ./moxygen.sh
 
+# Publish/subscribe through every public relay in the moq-interop-runner
+# registry (Cloudflare, moxygen, imquic, ...). Only moq-dev's relay is required;
+# the rest are reported in a summary table. Pass flags through, e.g.
+#   just relays --only moq-rs-draft-18 --publishers rust,js-vite --subscribers rust,js-vite
+relays *args:
+    ./relays.sh {{ args }}
+
 # Token interop: install moq auth in each published flavour and cross-verify.
 # The Rust `moq auth` comes from a channel (PATH); @moq/auth comes from npm,
 # driven under both node and bun. Default: rust only. Pass flags through, e.g.

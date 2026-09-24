@@ -3,6 +3,23 @@
 // <moq-watch> elements first (bundled or from the CDN), then imports this to
 // wire one up based on ?role=. The Playwright driver polls the watch element's
 // decoded-frame stats.
+// Log the WebTransport subprotocol each session negotiates (moqt-18, moq-lite-04,
+// ...) so smoke.sh can report the wire version. @moq/net only logs it in dev
+// builds, and its shared connection doesn't expose it. Drafts that negotiate in
+// SETUP rather than ALPN leave it empty.
+const NativeWebTransport = globalThis.WebTransport;
+if (NativeWebTransport) {
+	globalThis.WebTransport = class extends NativeWebTransport {
+		constructor(...args) {
+			super(...args);
+			this.ready.then(
+				() => this.protocol && console.log(`negotiated protocol: ${this.protocol}`),
+				() => {},
+			);
+		}
+	};
+}
+
 const params = new URLSearchParams(location.search);
 const role = params.get("role");
 const url = params.get("url") ?? "";
