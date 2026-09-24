@@ -85,6 +85,12 @@ func publish(url, broadcast string) error {
 	}
 	defer media.Finish()
 
+	// CreateBroadcast only registers the path locally; Announce advertises it to
+	// the relay, once its tracks exist.
+	if err := producer.Announce(moq.Route{}); err != nil {
+		return err
+	}
+
 	fmt.Fprintf(os.Stderr, "publishing %q (Annex-B H.264 from stdin) to %s\n", broadcast, url)
 
 	buf := make([]byte, readChunk)
