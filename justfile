@@ -30,15 +30,15 @@ cloudflare:
 moxygen:
     ./moxygen.sh
 
-# Token interop: install moq-token in each published flavour and cross-verify.
-# The Rust moq-token binary comes from a channel (PATH); @moq/token comes from npm,
+# Token interop: install moq auth in each published flavour and cross-verify.
+# The Rust `moq auth` comes from a channel (PATH); @moq/auth comes from npm,
 # driven under both node and bun. Default: rust only. Pass flags through, e.g.
 #   just token --generators rust,js-node --verifiers rust,js-bun --algorithms HS256
 token *args:
     ./token.sh {{ args }}
 
 # Full token matrix: every implementation mints and verifies every other's
-# tokens. rust-docker pulls the published moqdev/moq-token-cli image (needs a
+# tokens. rust-docker pulls the published moqdev/moq-cli image (needs a
 # container runtime; set TOKEN_DOCKER=podman to use podman instead of docker).
 token-full:
     ./token.sh --generators rust,js-node,js-bun,rust-docker --verifiers rust,js-node,js-bun,rust-docker

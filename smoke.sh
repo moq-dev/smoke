@@ -428,6 +428,15 @@ require_tools
 echo "relay:   $(command -v "$RELAY")"
 echo "moq:     $(command -v "$MOQ")"
 
+# moq-cli 0.12 renamed --client-connect to --connect and rejects the old name.
+# Pick whichever this build accepts until every channel ships 0.12.
+moq_help=$("$MOQ" --help 2>&1 || true)
+if grep -qE -- '(^|[[:space:]])--connect\b' <<<"$moq_help"; then
+    MOQ_CONNECT=--connect
+else
+    MOQ_CONNECT=--client-connect
+fi
+
 if needs python; then
     echo "installing python client (moq-rs from PyPI)..."
     PY="$TMP/venv/bin/python"
@@ -440,20 +449,20 @@ if needs python; then
 fi
 
 if needs go; then
-    echo "building go client (moq-dev/moq-go from the module proxy)..."
+    echo "building go client (moq.dev/moq from the module proxy)..."
     GO_SMOKE="$TMP/go-smoke"
     # Pull the latest published module, then build the client against it. The
-    # ergonomic moq-go wrapper pulls a transitive moq-go-ffi; `go get moq-go`
-    # records only moq-go's own checksum, so `go mod tidy` fetches the rest (no
+    # ergonomic moq.dev/moq wrapper pulls a transitive moq.dev/moq-ffi; `go get`
+    # records only the wrapper's own checksum, so `go mod tidy` fetches the rest (no
     # go.sum is committed -- freshness bans lockfiles -- so it's regenerated here).
     # The module proxy / sum.golang.org occasionally reset mid-stream; retry the
     # fetch (idempotent) and build only once it succeeds.
     # shellcheck disable=SC2329  # invoked via retry
-    go_fetch() (cd "$CLIENTS/go" && go get "github.com/moq-dev/moq-go@latest" && go mod tidy)
+    go_fetch() (cd "$CLIENTS/go" && go get "moq.dev/moq@latest" && go mod tidy)
     if ! have go; then
         mark_broken go "go not found"
     elif (retry 3 go_fetch && cd "$CLIENTS/go" && CGO_ENABLED=1 go build -o "$GO_SMOKE" .) >"$TMP/go-build.log" 2>&1; then :; else
-        mark_broken go "go get/build of moq-dev/moq-go failed"
+        mark_broken go "go get/build of moq.dev/moq failed"
         sed 's/^/        /' "$TMP/go-build.log" >&2 || true
     fi
 fi
@@ -589,7 +598,15 @@ fi
 echo "starting relay on 127.0.0.1:${PORT}..."
 # smoke.toml is the source of truth; rewrite its port into a scratch copy so a
 # busy 4443 (a dev relay, a parallel run) doesn't require editing the committed file.
-sed "s/4443/${PORT}/g" "$SMOKE_DIR/smoke.toml" >"$TMP/relay.toml"
+# Relays before 0.15 (no --listen flag) reject the renamed keys, so they get the
+# legacy layout until every channel ships 0.15.
+relay_config="$SMOKE_DIR/smoke.toml"
+relay_help=$("$RELAY" --help 2>&1 || true)
+if ! grep -q -- '--listen\b' <<<"$relay_help"; then
+    relay_config="$SMOKE_DIR/smoke-legacy.toml"
+fi
+echo "relay config: $(basename "$relay_config")"
+sed "s/4443/${PORT}/g" "$relay_config" >"$TMP/relay.toml"
 "$RELAY" "$TMP/relay.toml" >"$TMP/relay.log" 2>&1 &
 RELAY_PID=$!
 for _ in $(seq 1 60); do
@@ -624,7 +641,7 @@ start_publisher() {
     local lang="$1" broadcast="$2" log="$TMP/pub-$1.log"
     case "$lang" in
         rust)
-            (ffmpeg_h264 | "$MOQ" --client-connect "$URL" --broadcast "$broadcast" import avc3) >"$log" 2>&1 &
+            (ffmpeg_h264 | "$MOQ" "$MOQ_CONNECT" "$URL" --broadcast "$broadcast" import avc3) >"$log" 2>&1 &
             ;;
         python)
             (ffmpeg_h264 | "$PY" "$CLIENTS/python/smoke.py" \
@@ -655,7 +672,7 @@ run_subscriber() {
             # moq only handles SIGINT, so -k forces SIGKILL if it ignores the
             # SIGTERM that fires when no data arrives within the timeout.
             local n
-            n=$(timeout -k 3 "$TIMEOUT" "$MOQ" --client-connect "$URL" --broadcast "$broadcast" \
+            n=$(timeout -k 3 "$TIMEOUT" "$MOQ" "$MOQ_CONNECT" "$URL" --broadcast "$broadcast" \
                 export fmp4 2>/dev/null | head -c 1 | wc -c | tr -d ' ' || true)
             [[ "${n:-0}" -ge 1 ]]
             ;;

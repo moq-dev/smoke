@@ -120,7 +120,7 @@ jobs:
         # Honor each published binary crate's Cargo.lock. Without --locked, the
         # cargo channel can select a newly broken transitive dependency even when
         # the crate was published and tested against a working resolution.
-        run: cargo install --locked moq-relay moq-cli moq-token-cli
+        run: cargo install --locked moq-relay moq-cli
 
       - name: Install moq Rust packages (apt)
         if: matrix.channel == 'apt'
@@ -130,13 +130,13 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/moq-keyring.gpg] https://apt.moq.dev stable main" \
             | sudo tee /etc/apt/sources.list.d/moq.list
           sudo apt-get update
-          sudo apt-get install -y moq-relay moq-cli moq-token-cli
+          sudo apt-get install -y moq-relay moq-cli
 
       - name: Install moq Rust packages (brew)
         if: matrix.channel == 'brew'
         run: |
           brew tap moq-dev/tap
-          brew install moq-dev/tap/moq-relay moq-dev/tap/moq-cli moq-dev/tap/moq-token-cli
+          brew install moq-dev/tap/moq-relay moq-dev/tap/moq-cli
 
       - name: Install Nix (nix channel)
         if: matrix.channel == 'nix'
@@ -153,11 +153,9 @@ jobs:
         run: |
           relay=$(nix build --refresh --no-link --print-out-paths 'github:moq-dev/moq#moq-relay')
           cli=$(nix build --refresh --no-link --print-out-paths 'github:moq-dev/moq#moq-cli')
-          token=$(nix build --refresh --no-link --print-out-paths 'github:moq-dev/moq#moq-token-cli')
           {
             echo "RELAY_BIN=$relay/bin/moq-relay"
             echo "MOQ_BIN=$cli/bin/moq"
-            echo "TOKEN_BIN=$token/bin/moq-token"
           } >> "$GITHUB_ENV"
 
       - name: Pull moqdev images (docker channel)
@@ -214,17 +212,19 @@ jobs:
 
       # ── token interop ──────────────────────────────────────────────────
       # Independent of the media matrix: prove the published token tooling
-      # cross-verifies. moq-token rides the same channel as moq-relay/moq
-      # (cargo/apt/brew/nix, on PATH or TOKEN_BIN); @moq/token comes from npm and
-      # runs under both node and bun; rust-docker pulls the moqdev/moq-token-cli
-      # image. The negative pass inside token.sh confirms each verifier rejects
+      # cross-verifies. `moq auth` rides the same channel as moq-relay/moq
+      # (cargo/apt/brew/nix, on PATH or MOQ_BIN); @moq/auth comes from npm and
+      # runs under both node and bun; rust-docker runs `auth` in the
+      # moqdev/moq-cli image. The negative pass inside token.sh confirms each verifier rejects
       # tampered tokens and the wrong key.
       - name: Token interop
+        # Independent of the media matrix, so a red media cell mustn't hide it.
+        if: ${{ !cancelled() }}
         run: |
-          # The `rust` impl needs moq-token on PATH, which only the
-          # cargo/apt/brew/nix channels install. The docker channel ships no such
-          # binary, so it exercises the Rust verifier through the
-          # moqdev/moq-token-cli image (rust-docker) instead of plain `rust`.
+          # The `rust` impl runs a native `moq auth`, which only the
+          # cargo/apt/brew/nix channels install. The docker channel's moq wrapper
+          # doesn't mount token.sh's scratch dir, so it exercises the Rust
+          # verifier through the rust-docker cell instead of plain `rust`.
           if [ "${{ matrix.channel }}" = "docker" ]; then
             impls="js-node,js-bun,rust-docker"
           else

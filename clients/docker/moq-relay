@@ -24,8 +24,13 @@ image="${MOQ_RELAY_IMAGE:-moqdev/moq-relay}"
 name="${MOQ_RELAY_CONTAINER:-moq-relay-smoke}"
 "$runtime" rm -f "$name" >/dev/null 2>&1 || true
 
-# smoke.sh passes the config path as the final argument.
+# smoke.sh passes the config path as the final argument (or just --help, to
+# probe which config layout this relay accepts).
+mount=()
 cfg="${*: -1}"
-dir=$(cd "$(dirname "$cfg")" && pwd)
+if [[ -f "$cfg" ]]; then
+    dir=$(cd "$(dirname -- "$cfg")" && pwd)
+    mount=(-v "$dir:$dir")
+fi
 
-exec "$runtime" run --rm -i --name "$name" --network host -v "$dir:$dir" "$image" "$@"
+exec "$runtime" run --rm -i --name "$name" --network host "${mount[@]}" "$image" "$@"

@@ -23,7 +23,7 @@ typedef struct {
     pthread_cond_t cv;
     int got;           // a non-empty frame arrived
     int video_started; // guard: start the video track only once
-    int32_t broadcast; // handle delivered by moq_origin_consume_announced (0 until it arrives)
+    int32_t broadcast; // handle delivered by moq_origin_announced_broadcast (0 until it arrives)
 } ctx_t;
 
 // Callbacks run on libmoq's runtime thread; main waits on the condvar. ctx
@@ -113,8 +113,9 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // origin_publish = 0 disables publishing; consume via our origin.
-    int32_t session = moq_session_connect(url, strlen(url), 0, (uint32_t)origin, on_status, &c);
+    // NULL config dials with the defaults; origin_publish = 0 disables
+    // publishing; consume via our origin.
+    int32_t session = moq_session_connect(url, strlen(url), NULL, 0, (uint32_t)origin, on_status, &c);
     if (session <= 0) {
         fprintf(stderr, "error: moq_session_connect failed: %d\n", session);
         return 1;
@@ -125,11 +126,11 @@ int main(int argc, char **argv) {
     deadline.tv_sec += (time_t)timeout_s;
 
     // The broadcast arrives over the network after connect, so wait for it to be
-    // announced. moq_origin_consume_announced resolves via on_broadcast once it's
+    // announced. moq_origin_announced_broadcast resolves via on_broadcast once it's
     // available; we block on the condvar until then (or the deadline).
-    int32_t wait = moq_origin_consume_announced((uint32_t)origin, broadcast, strlen(broadcast), on_broadcast, &c);
+    int32_t wait = moq_origin_announced_broadcast((uint32_t)origin, broadcast, strlen(broadcast), on_broadcast, &c);
     if (wait <= 0) {
-        fprintf(stderr, "error: moq_origin_consume_announced failed: %d\n", wait);
+        fprintf(stderr, "error: moq_origin_announced_broadcast failed: %d\n", wait);
         return 1;
     }
 

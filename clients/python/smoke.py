@@ -22,10 +22,13 @@ async def publish(url: str, broadcast: str) -> None:
     async with moq.Client(url, tls_verify=False) as client:
         # create_broadcast registers the broadcast and hands back its producer
         # (the old client.publish(broadcast, producer) split was removed in the
-        # ergonomic moq-rs API). publish_media_stream feeds a raw Annex-B pipe to
+        # ergonomic moq-rs API). publish_video_stream feeds a raw Annex-B pipe to
         # the streaming importer, which infers frame boundaries.
         producer = client.create_broadcast(broadcast)
-        media = producer.publish_media_stream("avc3")
+        media = producer.publish_video_stream(moq.VideoFormat.AVC3)
+        # create_broadcast only registers the path locally; announce advertises it
+        # to the relay, once its tracks exist.
+        producer.announce()
         print(f"publishing {broadcast!r} (Annex-B H.264 from stdin) to {url}")
 
         loop = asyncio.get_running_loop()
