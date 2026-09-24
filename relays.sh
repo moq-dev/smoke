@@ -16,6 +16,7 @@ SMOKE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 REGISTRY="${RELAYS_REGISTRY:-https://raw.githubusercontent.com/englishm/moq-interop-runner/main/implementations.json}"
 REQUIRED="moq-dev-rs"
+REQUIRED_EXPLICIT=0 # set by --required; the default only gates when --only selects it
 # Public endpoints the registry doesn't list (yet): key, display name, URL. They
 # merge with the registry by URL, so an upstream registration supersedes these.
 EXTRA_ENDPOINTS=(
@@ -45,7 +46,10 @@ while [[ $# -gt 0 ]]; do
         --required | --only | --registry | --json)
             [[ $# -ge 2 && "$2" != -* ]] || usage
             case "$1" in
-                --required) REQUIRED="$2" ;;
+                --required)
+                    REQUIRED="$2"
+                    REQUIRED_EXPLICIT=1
+                    ;;
                 --only) ONLY="$2" ;;
                 --registry) REGISTRY="$2" ;;
                 --json) JSON_OUT="$2" ;;
@@ -90,18 +94,24 @@ in_list() {
 } | awk -F'\t' '!seen[$3]++' >"$TMP/endpoints.tsv"
 
 relay_args=()
+: >"$TMP/selected.tsv"
 while IFS=$'\t' read -r key name url; do
     [[ -z "$ONLY" ]] || in_list "$key" "$ONLY" || continue
     relay_args+=(--relay "$url")
     printf '%s\t%s\t%s\n' "$key" "$name" "$url" >>"$TMP/selected.tsv"
 done <"$TMP/endpoints.tsv"
 
-# A required implementation that vanished from the registry must not pass by
-# default just because none of its endpoints ran.
+# A required implementation must not pass just because none of its endpoints
+# ran: it has to exist, and an explicit --required key has to survive --only.
+# (The default moq-dev-rs gate simply doesn't apply to an --only run without it.)
 IFS=',' read -r -a required_keys <<<"$REQUIRED"
 for key in ${required_keys[@]+"${required_keys[@]}"}; do
     if ! cut -f1 "$TMP/endpoints.tsv" | grep -qxF "$key"; then
         echo "error: required relay '$key' has no public endpoint in $REGISTRY" >&2
+        exit 1
+    fi
+    if [[ "$REQUIRED_EXPLICIT" -eq 1 ]] && ! cut -f1 "$TMP/selected.tsv" | grep -qxF "$key"; then
+        echo "error: required relay '$key' is excluded by --only $ONLY" >&2
         exit 1
     fi
 done
