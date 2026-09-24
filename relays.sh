@@ -16,6 +16,12 @@ SMOKE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 REGISTRY="${RELAYS_REGISTRY:-https://raw.githubusercontent.com/englishm/moq-interop-runner/main/implementations.json}"
 REQUIRED="moq-dev-rs"
+# Public endpoints the registry doesn't list (yet): key, display name, URL. They
+# merge with the registry by URL, so an upstream registration supersedes these.
+EXTRA_ENDPOINTS=(
+    $'moq-rs\tmoq-rs (draft-16)\thttps://draft-16.cloudflare.mediaoverquic.com/moq'
+    $'moq-rs\tmoq-rs (draft-16)\tmoqt://draft-16.cloudflare.mediaoverquic.com:443'
+)
 ONLY=""
 JSON_OUT=""
 SMOKE_ARGS=()
@@ -77,9 +83,11 @@ in_list() {
 # One row per endpoint: key, display name, url. Deduplicated by URL (an entry
 # can list the same URL twice under different transport labels); the transport
 # is taken from the URL scheme rather than the registry's label.
-jq -r '.implementations | to_entries[] | .key as $k | .value.name as $n |
-    (.value.roles.relay.remote // [])[] | [$k, $n, .url] | @tsv' "$TMP/registry.json" |
-    awk -F'\t' '!seen[$3]++' >"$TMP/endpoints.tsv"
+{
+    jq -r '.implementations | to_entries[] | .key as $k | .value.name as $n |
+        (.value.roles.relay.remote // [])[] | [$k, $n, .url] | @tsv' "$TMP/registry.json"
+    printf '%s\n' "${EXTRA_ENDPOINTS[@]}"
+} | awk -F'\t' '!seen[$3]++' >"$TMP/endpoints.tsv"
 
 relay_args=()
 while IFS=$'\t' read -r key name url; do
