@@ -283,7 +283,9 @@ function relays(r) {
 		if (!byKey.has(e.key)) byKey.set(e.key, { key: e.key, name: e.name, required: e.required, endpoints: [] });
 		byKey.get(e.key).endpoints.push(e);
 	}
-	return [...byKey.values()];
+	return [...byKey.values()].sort(
+		(a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || a.key.localeCompare(b.key),
+	);
 }
 
 function renderLatest(r) {

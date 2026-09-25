@@ -223,7 +223,7 @@ jq -r '
     "## External relay interop\n",
     "| Relay | Transport | Endpoint | Gate | Version | " + ($pairs | join(" | ")) + " |",
     "|---|---|---|---|---|" + ($pairs | map("---|") | join("")),
-    (.endpoints[] | . as $e |
+    (.endpoints | sort_by([(.name | ascii_downcase), .key, .transport]) | .[] | . as $e |
         "| \(.name) (`\(.key)`) | \(.transport) | `\(.url)` | \(if .required then "required" else "optional" end) | \(.versions | join(", ")) | "
         + ($pairs | map($e.cells[.].status // "" | icon) | join(" | ")) + " |"),
     "\nRequired: \([$req[] | select(.ok)] | length)/\($req | length) endpoints passing. Optional: \([$opt[] | select(.ok)] | length)/\($opt | length) endpoints passing.",
