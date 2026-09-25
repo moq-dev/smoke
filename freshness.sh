@@ -5,9 +5,8 @@
 #      fine: it pins the dev toolchain, not the moq packages, and the moq "nix"
 #      channel references the moq flake ad-hoc so the moq version is never locked;
 #   2. the moq packages under test are requested as "latest", never pinned;
-#   3. the one unavoidable pin (npm `playwright`, which must match the toolchain's
-#      Chromium build) equals what the toolchain ships, so a toolchain bump can't
-#      quietly leave it stale.
+#   3. forced pins are deliberate: npm `playwright` must match the toolchain's
+#      Chromium build, while `moq-token-cli` stays at the compatibility floor.
 #
 # Run standalone (`just freshness`) or as the opening step of smoke.sh.
 set -euo pipefail
@@ -49,6 +48,16 @@ done
 ver=$(grep -oE "\"@moq/auth\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" clients/token/js/package.json | sed -E 's/.*"([^"]*)"$/\1/')
 if [[ "$ver" == "latest" ]]; then note ok "@moq/auth -> \"$ver\""; else
     note FAIL "@moq/auth pinned to \"$ver\" (want \"latest\")"
+    fail=1
+fi
+# The legacy token CLI is deliberately fixed at the first supported release.
+# Moving it forward would silently stop checking the compatibility floor.
+# shellcheck disable=SC2016  # matching the literal defaulted variable in token.sh
+if grep -qF 'LEGACY_TOKEN_VERSION="${LEGACY_TOKEN_VERSION:-0.5.38}"' token.sh &&
+    grep -qF 'moq-token-cli' token.sh; then
+    note ok "moq-token-cli -> 0.5.38 (compatibility floor)"
+else
+    note FAIL "token.sh no longer pins moq-token-cli 0.5.38 as its compatibility floor"
     fail=1
 fi
 # The token Docker image must be the unpinned (:latest) tag, pulled fresh each run.
@@ -159,7 +168,7 @@ else
     fail=1
 fi
 
-echo "== forced pin (npm playwright) tracks the toolchain =="
+echo "== forced pins =="
 pin=$(json_dep playwright)
 if [[ "$pin" == ^* || "$pin" == "~"* || "$pin" == "latest" || "$pin" == *"x" || "$pin" == *"*"* ]]; then
     note FAIL "playwright must be an exact version matching the toolchain's Chromium, got \"$pin\""

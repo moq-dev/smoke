@@ -271,8 +271,9 @@ jobs:
       # cross-verifies. `moq auth` rides the same channel as moq-relay/moq
       # (cargo/apt/brew/nix, on PATH or MOQ_BIN); @moq/auth comes from npm and
       # runs under both node and bun; rust-docker runs `auth` in the
-      # moqdev/moq image. The negative pass inside token.sh confirms each verifier rejects
-      # tampered tokens and the wrong key.
+      # moqdev/moq image. The cargo cell also installs the 2026-07-22 compatibility
+      # floor as rust-legacy. The negative pass inside token.sh confirms each
+      # verifier rejects tampered tokens and the wrong key.
       - name: Token interop
         # Independent of the media matrix, so a red media cell mustn't hide it.
         if: ${{ !cancelled() }}
@@ -288,6 +289,9 @@ jobs:
             # The Docker cell needs a daemon; GitHub's macOS runners have none, so
             # it's Linux-only. (Docker is preinstalled on the Linux runners.)
             if [ "$RUNNER_OS" = "Linux" ]; then impls="$impls,rust-docker"; fi
+            # One cell is enough to hold the wire-format compatibility floor;
+            # repeating this pinned build for apt and nix adds no coverage.
+            if [ "${{ matrix.channel }}" = "cargo" ]; then impls="$impls,rust-legacy"; fi
           fi
           ./token.sh --generators "$impls" --verifiers "$impls"
 
