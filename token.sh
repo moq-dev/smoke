@@ -5,6 +5,7 @@
 # in several flavours from several registries:
 #
 #   - rust    : `moq auth` from moq-cli (cargo / brew / apt) or the moq flake (nix)
+#   - rust-legacy: the first supported pre-pattern `moq-token` CLI release
 #   - js-node : the @moq/auth npm package's `moq-auth` CLI, run under node
 #   - js-bun  : the same published npm package, run under bun
 #
@@ -37,6 +38,13 @@ ALGORITHMS="${TOKEN_ALGORITHMS:-HS256,EdDSA,ES256,RS256}"
 # tests (MOQ_BIN, else PATH), since moq-token-cli was folded into `moq auth`
 # (moq-dev/moq#3684). TOKEN_BIN overrides the whole prefix.
 TOKEN="${TOKEN_BIN:-${MOQ_BIN:-moq} auth}"
+
+# Compatibility floor from 2026-07-22, when moq-token 0.7.0 shipped. Unlike
+# every current implementation, this is intentionally pinned: moving it would
+# stop testing whether new JWK/JWT formats still load in the oldest supported
+# verifier. LEGACY_TOKEN_BIN can supply an already-installed command instead.
+LEGACY_TOKEN_VERSION="${LEGACY_TOKEN_VERSION:-0.5.38}"
+LEGACY_TOKEN="${LEGACY_TOKEN_BIN:-}"
 
 # The published Docker image for the `rust-docker` cell. Untagged = :latest, the
 # tag the release pipeline moves to the newest version; pulled fresh each run.
@@ -138,6 +146,7 @@ cli_for() {
     # callers expand it unquoted.
     case "$1" in
         rust) echo "$TOKEN" ;;
+        rust-legacy) echo "$LEGACY_TOKEN" ;;
         # Mount TMP at its real path so the in-container CLI reads/writes the same
         # key/token files token.sh hands it. The image bundles the nix store, so
         # the binary's libiconv deps resolve (the brew bottle's bug doesn't apply).
@@ -157,7 +166,7 @@ gen() {
         return 1
     }
     case "$impl" in
-        rust | rust-docker)
+        rust | rust-docker | rust-legacy)
             if [[ "$algo" == HS* ]]; then
                 # shellcheck disable=SC2086  # cli is a deliberate multi-word prefix
                 $cli generate --algorithm "$algo" --out "$dir/sign.jwk"
@@ -181,15 +190,18 @@ gen() {
 }
 
 sign() {
-    local impl="$1" signkey="$2" algo="$3" cli
+    local impl="$1" signkey="$2" algo="$3" cli suffix="/**"
     cli=$(cli_for "$impl") || {
         echo "unknown signer: $impl" >&2
         return 1
     }
+    # The legacy CLI takes prefixes; current CLIs take patterns. A subtree has
+    # the same meaning in both formats and can be written as put/get on the wire.
+    if [[ "$impl" == rust-legacy || "${4:-}" == exact ]]; then suffix=""; fi
     # Same flags for the PATH binary and the Docker image; JS uses the same ones too.
     # shellcheck disable=SC2086
     $cli sign --key "$signkey" --root "$ROOT" \
-        --publish "pub-canary-$algo" --subscribe "sub-canary-$algo"
+        --publish "pub-canary-$algo$suffix" --subscribe "sub-canary-$algo$suffix"
 }
 
 verify() {
@@ -199,7 +211,7 @@ verify() {
         return 1
     }
     case "$impl" in
-        rust | rust-docker)
+        rust | rust-docker | rust-legacy)
             # Rust verify reads the token from --in and ignores root (it just
             # decodes); it prints a debug dump of the claims on success.
             # shellcheck disable=SC2086
@@ -220,6 +232,11 @@ rust_probe() {
     $TOKEN generate --algorithm HS256 --out "$TMP/rust-probe.jwk" >"$TMP/rust-probe.log" 2>&1
 }
 
+legacy_probe() {
+    # shellcheck disable=SC2086  # LEGACY_TOKEN is a deliberate command prefix
+    $LEGACY_TOKEN generate --algorithm HS256 --out "$TMP/legacy-probe.jwk" >"$TMP/legacy-probe.log" 2>&1
+}
+
 "$SMOKE_DIR/freshness.sh" || echo "WARN: freshness check failed (see above); continuing" >&2
 
 if needs rust; then
@@ -235,6 +252,31 @@ if needs rust; then
     else
         mark_broken rust "$TOKEN on PATH but won't run (see below)"
         sed 's/^/        /' "$TMP/rust-probe.log" >&2 || true
+    fi
+fi
+
+if needs rust-legacy; then
+    if [[ -z "$LEGACY_TOKEN" ]]; then
+        if ! have cargo; then
+            mark_broken rust-legacy "cargo not found (needed to install moq-token-cli $LEGACY_TOKEN_VERSION)"
+        elif cargo install --quiet --locked --version "$LEGACY_TOKEN_VERSION" \
+            --root "$TMP/rust-legacy" moq-token-cli >"$TMP/legacy-install.log" 2>&1; then
+            LEGACY_TOKEN="$TMP/rust-legacy/bin/moq-token"
+        else
+            mark_broken rust-legacy "moq-token-cli $LEGACY_TOKEN_VERSION failed to install"
+            sed 's/^/        /' "$TMP/legacy-install.log" >&2 || true
+        fi
+    fi
+
+    if ! is_broken rust-legacy; then
+        if ! have "${LEGACY_TOKEN%% *}"; then
+            mark_broken rust-legacy "${LEGACY_TOKEN%% *} not found"
+        elif legacy_probe; then
+            echo "rust-legacy: moq-token-cli $LEGACY_TOKEN_VERSION ($LEGACY_TOKEN)"
+        else
+            mark_broken rust-legacy "$LEGACY_TOKEN won't run (see below)"
+            sed 's/^/        /' "$TMP/legacy-probe.log" >&2 || true
+        fi
     fi
 fi
 
@@ -401,6 +443,43 @@ else
             fi
         done
     done
+fi
+
+# Exact patterns cannot be represented by legacy put/get prefixes. Prove the
+# legacy verifier accepts this key with a legacy subtree token first.
+if needs rust-legacy && ! is_broken rust-legacy; then
+    exact_gen=""
+    for g in "${GEN_LIST[@]}"; do
+        if [[ "$g" != rust-legacy ]] && ! is_broken "$g"; then
+            exact_gen="$g"
+            break
+        fi
+    done
+    if [[ -n "$exact_gen" ]]; then
+        algo="${ALGO_LIST[0]}"
+        keydir="$TMP/exact-$exact_gen-$algo"
+        subtree="$keydir/subtree.jwt"
+        exact="$keydir/exact.jwt"
+        legacy_out="$keydir/legacy.log"
+        current_out="$keydir/current.log"
+        if ! gen "$exact_gen" "$algo" "$keydir" >"$keydir.gen.log" 2>&1 ||
+            ! sign rust-legacy "$keydir/sign.jwk" "$algo" >"$subtree" 2>"$keydir.sign.log" ||
+            ! verify rust-legacy "$keydir/verify.jwk" "$subtree" >"$legacy_out" 2>&1 ||
+            ! claims_ok "$legacy_out" "$algo"; then
+            echo "  FAIL  reject(rust-legacy, exact): subtree setup failed"
+            overall=1
+        elif ! sign "$exact_gen" "$keydir/sign.jwk" "$algo" exact >"$exact" 2>"$keydir.exact.log" ||
+            ! verify "$exact_gen" "$keydir/verify.jwk" "$exact" >"$current_out" 2>&1 ||
+            ! claims_ok "$current_out" "$algo"; then
+            echo "  FAIL  reject(rust-legacy, exact): current token setup failed"
+            overall=1
+        elif verify rust-legacy "$keydir/verify.jwk" "$exact" >"$legacy_out" 2>&1; then
+            echo "  FAIL  reject(rust-legacy, exact): accepted an exact-pattern token"
+            overall=1
+        else
+            echo "  PASS  reject(rust-legacy, exact): exact-pattern token refused"
+        fi
+    fi
 fi
 
 if [[ "$overall" -eq 0 ]]; then
