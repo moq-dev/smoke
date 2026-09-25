@@ -40,7 +40,7 @@ TOKEN="${TOKEN_BIN:-${MOQ_BIN:-moq} auth}"
 
 # The published Docker image for the `rust-docker` cell. Untagged = :latest, the
 # tag the release pipeline moves to the newest version; pulled fresh each run.
-DOCKER_TOKEN_IMAGE="${DOCKER_TOKEN_IMAGE:-moqdev/moq-cli}"
+DOCKER_TOKEN_IMAGE="${DOCKER_TOKEN_IMAGE:-moqdev/moq}"
 # Container runtime for that cell. `docker` by default (what GitHub's Linux
 # runners ship); set TOKEN_DOCKER=podman to use a drop-in-compatible one.
 DOCKER="${TOKEN_DOCKER:-docker}"

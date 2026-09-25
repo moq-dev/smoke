@@ -45,7 +45,7 @@ token *args:
     ./token.sh {{ args }}
 
 # Full token matrix: every implementation mints and verifies every other's
-# tokens. rust-docker pulls the published moqdev/moq-cli image (needs a
+# tokens. rust-docker pulls the published moqdev/moq image (needs a
 # container runtime; set TOKEN_DOCKER=podman to use podman instead of docker).
 token-full:
     ./token.sh --generators rust,js-node,js-bun,rust-docker --verifiers rust,js-node,js-bun,rust-docker
