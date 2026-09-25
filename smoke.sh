@@ -18,9 +18,9 @@
 # public relays in the moq-interop-runner registry. An external http(s) or moqt
 # URL is that transport alone: the WebSocket fallback stays off. A ws(s) URL is
 # the WebSocket column, which relays.sh only adds for relays that opted in.
-# On those external URLs the browser (js-web) runs only for WebTransport and bun
-# (js-bun) only for raw QUIC. A client that does not belong is left out of the
-# results, not recorded as a skip.
+# On those external URLs the browser (js-web) and bun (js-bun) run only on
+# WebTransport. The bun polyfill has no raw-QUIC mode. A client that does not
+# belong is left out of the results, not recorded as a skip.
 set -euo pipefail
 
 SMOKE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -912,17 +912,14 @@ record() {
 
 belongs() {
     # belongs <lang>: this client is part of the matrix for $URL.
-    # The local relay runs whoever was requested. External relays split JS by
-    # transport: the browser is WebTransport (http/https) only, and bun is raw
-    # QUIC (moqt://) only. Anything else is left out, not recorded as a skip.
-    # The browser will never speak native QUIC, so it does not appear there.
+    # The local relay runs whoever was requested. On external relays the browser
+    # and bun run only on WebTransport (http/https). @moq/web-transport is HTTP/3
+    # and has no raw-QUIC mode, so bun is not dialed at moqt://. Anything else is
+    # left out, not recorded as a skip.
     [[ ${#EXTERNAL_RELAYS[@]} -eq 0 ]] && return 0
     case "$1" in
-        js-web | js-esbuild | js-jsdelivr | js-node)
+        js-web | js-esbuild | js-jsdelivr | js-node | js-bun)
             [[ "$URL" == http://* || "$URL" == https://* ]]
-            ;;
-        js-bun)
-            [[ "$URL" == moqt://* ]]
             ;;
         *) return 0 ;;
     esac

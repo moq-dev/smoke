@@ -134,7 +134,14 @@ const timeout = new Promise<never>((_, reject) => {
 try {
 	await Promise.race([run(), timeout]);
 } catch (err) {
-	console.error(`error: ${err instanceof Error ? err.message : String(err)}`);
+	// AggregateError from Promise.any has an empty message; the cause is in .errors.
+	const message =
+		err instanceof AggregateError
+			? err.errors.map((e) => (e instanceof Error ? e.message : String(e))).filter(Boolean).join("; ")
+			: err instanceof Error
+				? err.message
+				: String(err);
+	console.error(`error: ${message || String(err)}`);
 	process.exitCode = 1;
 } finally {
 	if (timeoutId !== undefined) clearTimeout(timeoutId);

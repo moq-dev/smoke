@@ -332,8 +332,9 @@ jobs:
       # The relay list comes live from the moq-interop-runner registry. Only
       # moq-dev's own relay gates the job; every other endpoint lands in the job
       # summary table as optional. Rust publishes and subscribes on every transport.
-      # js-web is the browser and runs only on WebTransport. js-bun subscribes
-      # only on raw QUIC (moqt://). Neither is listed on the other column.
+      # js-web is the browser and js-bun is the WebTransport polyfill. Both run
+      # only on WebTransport. The polyfill has no raw-QUIC (moqt://) mode, so
+      # neither is listed on native QUIC or on the WebSocket column.
       - name: External relay interop
         run: ./relays.sh --publishers rust,js-web --subscribers rust,js-web,js-bun --timeout 30 --json results.json --logs logs
 

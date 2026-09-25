@@ -330,7 +330,7 @@ function renderLatest(r) {
 	document.getElementById("legend").innerHTML =
 		`Each cell counts the publisher → subscriber pairs whose bytes flowed through that endpoint ` +
 		`(publishers: ${esc(clients(0))}; subscribers: ${esc(clients(1))}). ` +
-		`js-web is the browser and only runs on WebTransport. js-bun only runs on raw QUIC. ` +
+		`js-web is the browser and js-bun is the WebTransport polyfill. Both run only on WebTransport. ` +
 		`A client that does not belong on a transport is left out of that column. ` +
 		`WebSocket is its own column, and only for relays that opted in. ` +
 		`Hover a cell for what failed; click it for the logs.`;
