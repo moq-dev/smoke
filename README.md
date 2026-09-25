@@ -11,7 +11,7 @@ This repo installs the public [moq](https://github.com/moq-dev/moq) packages and
 | Lane | Run | Coverage |
 | --- | --- | --- |
 | Packages | `just smoke`, `just full` | Published clients through a local `moq-relay`. `smoke` is Rust only. `full` is the cross-language matrix. |
-| Public relays | `just relays` | The same clients through every relay in the [moq-interop-runner](https://github.com/englishm/moq-interop-runner) registry. This lane is what the [results page](https://moq-dev.github.io/smoke/) shows. Only `--required` relays fail the run; the default is moq-dev's `cdn.moq.dev`. |
+| Public relays | `just relays` | Rust publisher and subscriber through every relay in the [moq-interop-runner](https://github.com/englishm/moq-interop-runner) registry. CI publishes with Rust and the browser (`js`) and subscribes with Rust, the browser, and `js-bun`. That run is what the [results page](https://moq-dev.github.io/smoke/) shows. Only `--required` relays fail the run; the default is moq-dev's `cdn.moq.dev`. |
 | Cloudflare | `just cloudflare` | Relays built from the default branches of [cloudflare/moq-rs](https://github.com/cloudflare/moq-rs) and moq-dev/moq, driven by a Cloudflare client over WebTransport and raw QUIC. |
 | moxygen | `just moxygen` | Meta's [`moxygen`](https://github.com/facebookexperimental/moxygen) interop client through the latest moq-dev relay. Needs Linux Docker. |
 | Tokens | `just token`, `just token-full` | `moq auth` and npm [`@moq/auth`](https://www.npmjs.com/package/@moq/auth) mint and verify each other's JWTs, and each verifier rejects a tampered token. |
@@ -22,7 +22,7 @@ CI runs the matrix on pull requests and nightly: [`.github/workflows/smoke.yml`]
 
 ## Clients
 
-`moq-relay` and `moq` come from a channel: `PATH`, `RELAY_BIN`/`MOQ_BIN`, `just nix-channel`, or the wrappers in [`clients/docker`](clients/docker). Every other client installs from its registry on each run.
+`moq-relay` and `moq` come from `PATH` or from `RELAY_BIN` and `MOQ_BIN`. Every other client installs from its registry on each run.
 
 | Client | Role | Install |
 | --- | --- | --- |
@@ -38,11 +38,11 @@ CI runs the matrix on pull requests and nightly: [`.github/workflows/smoke.yml`]
 
 ## Run
 
-The Nix flake carries the client toolchains (direnv loads `.envrc`). The moq binaries come from a channel.
+The Nix flake carries the client toolchains (direnv loads `.envrc`). Put `moq-relay` and `moq` on `PATH` (cargo, Homebrew, or apt) before the lanes below.
 
 ```bash
 nix develop
-cargo install moq-relay moq-cli   # or brew, apt, just nix-channel, clients/docker
+cargo install moq-relay moq-cli   # or brew / apt
 just full
 just relays
 just cloudflare
@@ -50,6 +50,8 @@ just moxygen
 just token
 just check    # shfmt, shellcheck, actionlint, freshness
 ```
+
+`just nix-channel` is a run, not an install. It builds `github:moq-dev/moq#moq-relay` and `#moq` with `nix build --refresh --no-link`, then runs `smoke.sh` with `RELAY_BIN` and `MOQ_BIN` pointed at those outputs. Nothing is left on `PATH`, so a later `just full` does not see those binaries. The Docker images work the same way: point `RELAY_BIN` and `MOQ_BIN` at the wrappers in [`clients/docker`](clients/docker). Those wrappers are not an install.
 
 `just check` lints the harness. Run the lane you changed.
 
