@@ -15,7 +15,12 @@
 #
 # With --relay URL (repeatable) it skips the local relay and runs the same matrix
 # through each external relay instead; relays.sh drives that mode against the
-# public relays in the moq-interop-runner registry.
+# public relays in the moq-interop-runner registry. An external http(s) or moqt
+# URL is that transport alone: the WebSocket fallback stays off. A ws(s) URL is
+# the WebSocket column, which relays.sh only adds for relays that opted in.
+# On those external URLs the browser (js-web) and bun (js-bun) run only on
+# WebTransport. The bun polyfill has no raw-QUIC mode. A client that does not
+# belong is left out of the results, not recorded as a skip.
 set -euo pipefail
 
 SMOKE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -458,12 +463,48 @@ echo "moq:     $(command -v "$MOQ")"
 
 # moq-cli 0.12 renamed --client-connect to --connect and rejects the old name.
 # Pick whichever this build accepts until every channel ships 0.12.
+# `--connect-websocket-enabled` contains `--connect`, and `-` is a word
+# boundary, so the match has to end on the option that takes the URL.
 moq_help=$("$MOQ" --help 2>&1 || true)
-if grep -qE -- '(^|[[:space:]])--connect\b' <<<"$moq_help"; then
+if grep -qE -- '(^|[[:space:]])--connect([[:space:]=]|$)' <<<"$moq_help"; then
     MOQ_CONNECT=--connect
 else
     MOQ_CONNECT=--client-connect
 fi
+# Present once moq-cli grew `--connect-websocket-enabled`. Older binaries ignore
+# the env var below and still race the fallback; they reject an unknown flag.
+MOQ_WS_OFF=()
+if grep -qF -- '--connect-websocket-enabled' <<<"$moq_help"; then
+    MOQ_WS_OFF=(--connect-websocket-enabled=false)
+fi
+
+# The local relay may race its WebSocket binding. An external ws(s) URL is the
+# WebSocket column. Every other external URL is WebTransport or raw QUIC.
+allow_websocket() {
+    [[ ${#EXTERNAL_RELAYS[@]} -eq 0 || "$URL" == ws://* || "$URL" == wss://* ]]
+}
+
+# Run a client. When this URL must not race WebSocket, say so in the environment.
+# The Rust CLI reads MOQ_CONNECT_WEBSOCKET_ENABLED. The browser page and native JS
+# read SMOKE_WEBSOCKET. Python, Go, Swift, Kotlin, and C have no published switch
+# for it yet; the relays lane does not use them.
+run_client() {
+    if allow_websocket; then
+        "$@"
+    else
+        SMOKE_WEBSOCKET=0 MOQ_CONNECT_WEBSOCKET_ENABLED=false "$@"
+    fi
+}
+
+rust_moq() {
+    # Clap takes the argv after --connect as the URL. A flag in that position
+    # is not a value, so the websocket switch goes before --connect.
+    if ! allow_websocket && [[ ${#MOQ_WS_OFF[@]} -gt 0 ]]; then
+        run_client "$MOQ" "${MOQ_WS_OFF[@]}" "$MOQ_CONNECT" "$@"
+    else
+        run_client "$MOQ" "$MOQ_CONNECT" "$@"
+    fi
+}
 
 if needs python; then
     echo "installing python client (moq-rs from PyPI)..."
@@ -495,13 +536,13 @@ if needs go; then
     fi
 fi
 
-# The browser client ships three delivery variants (js = vite, js-esbuild,
+# The browser client ships three delivery variants (js-web = vite, js-esbuild,
 # js-jsdelivr) that all drive the same <moq-publish>/<moq-watch> elements; they
 # differ only in how the published npm packages reach the page.
-if needs js || needs js-esbuild || needs js-jsdelivr; then
+if needs js-web || needs js-esbuild || needs js-jsdelivr; then
     echo "installing browser clients (@moq/watch + @moq/publish from npm)..."
     if ! have bun; then
-        for v in js js-esbuild js-jsdelivr; do mark_broken "$v" "bun not found"; done
+        for v in js-web js-esbuild js-jsdelivr; do mark_broken "$v" "bun not found"; done
     else
         js_base() {
             (cd "$CLIENTS/js" && bun install) || return 1
@@ -512,8 +553,8 @@ if needs js || needs js-esbuild || needs js-jsdelivr; then
             # jsdelivr imports from the CDN at runtime, so it needs no build. The
             # bundler variants each build their own page; a build failure fails
             # only that variant.
-            if needs js && ! (cd "$CLIENTS/js" && bunx vite build) >"$TMP/js.log" 2>&1; then
-                mark_broken js "vite build failed"
+            if needs js-web && ! (cd "$CLIENTS/js" && bunx vite build) >"$TMP/js.log" 2>&1; then
+                mark_broken js-web "vite build failed"
                 sed 's/^/        /' "$TMP/js.log" >&2 || true
             fi
             if needs js-esbuild && ! (cd "$CLIENTS/js" && bun build-esbuild.ts) >"$TMP/js-esbuild.log" 2>&1; then
@@ -521,7 +562,7 @@ if needs js || needs js-esbuild || needs js-jsdelivr; then
                 sed 's/^/        /' "$TMP/js-esbuild.log" >&2 || true
             fi
         else
-            for v in js js-esbuild js-jsdelivr; do mark_broken "$v" "bun install / playwright failed"; done
+            for v in js-web js-esbuild js-jsdelivr; do mark_broken "$v" "bun install / playwright failed"; done
             sed 's/^/        /' "$TMP/js-base.log" >&2 || true
         fi
     fi
@@ -661,11 +702,16 @@ ffmpeg_h264() {
         -f h264 -
 }
 
-# The driver.ts --variant for a browser cell: plain `js` is the vite bundle.
+# The driver.ts --variant for a browser cell. js-web is the vite bundle.
 js_variant() {
     case "$1" in
-        js) echo vite ;;
-        *) echo "${1#js-}" ;;
+        js-web) echo vite ;;
+        js-esbuild) echo esbuild ;;
+        js-jsdelivr) echo jsdelivr ;;
+        *)
+            echo "unknown browser variant: $1" >&2
+            return 1
+            ;;
     esac
 }
 
@@ -679,20 +725,20 @@ start_publisher() {
     local lang="$1" broadcast="$2" log="$TMP/pub-$1.log"
     case "$lang" in
         rust)
-            (ffmpeg_h264 | "$MOQ" "$MOQ_CONNECT" "$URL" --broadcast "$broadcast" import avc3) >"$log" 2>&1 &
+            (ffmpeg_h264 | rust_moq "$URL" --broadcast "$broadcast" import avc3) >"$log" 2>&1 &
             ;;
         python)
-            (ffmpeg_h264 | "$PY" "$CLIENTS/python/smoke.py" \
+            (ffmpeg_h264 | run_client "$PY" "$CLIENTS/python/smoke.py" \
                 publish --url "$URL" --broadcast "$broadcast") >"$log" 2>&1 &
             ;;
         go)
-            (ffmpeg_h264 | "$GO_SMOKE" publish --url "$URL" --broadcast "$broadcast") >"$log" 2>&1 &
+            (ffmpeg_h264 | run_client "$GO_SMOKE" publish --url "$URL" --broadcast "$broadcast") >"$log" 2>&1 &
             ;;
-        js | js-esbuild | js-jsdelivr)
+        js-web | js-esbuild | js-jsdelivr)
             # Headless Chromium encodes its own H.264 from a fake camera via
             # WebCodecs (lazily, once a subscriber creates demand). The variant
             # selects how the published packages reach the page.
-            (cd "$CLIENTS/js" && bun driver.ts publish --variant "$(js_variant "$lang")" \
+            (cd "$CLIENTS/js" && run_client bun driver.ts publish --variant "$(js_variant "$lang")" \
                 --url "$URL" --broadcast "$broadcast") >"$log" 2>&1 &
             ;;
         *)
@@ -710,8 +756,15 @@ run_subscriber() {
             # moq only handles SIGINT, so -k forces SIGKILL if it ignores the
             # SIGTERM that fires when no data arrives within the timeout.
             local n
+            local -a ws=()
             # stderr stays in the cell log: it names the negotiated version.
-            n=$(timeout -k 3 "$TIMEOUT" "$MOQ" "$MOQ_CONNECT" "$URL" --broadcast "$broadcast" \
+            # timeout is a binary, so the flag has to be on its argv; the env
+            # prefix still reaches moq through it. The websocket switch goes
+            # before --connect so clap takes the URL as that option's value.
+            if ! allow_websocket && [[ ${#MOQ_WS_OFF[@]} -gt 0 ]]; then
+                ws=("${MOQ_WS_OFF[@]}")
+            fi
+            n=$(run_client timeout -k 3 "$TIMEOUT" "$MOQ" ${ws[@]+"${ws[@]}"} "$MOQ_CONNECT" "$URL" --broadcast "$broadcast" \
                 export fmp4 | head -c 1 | wc -c | tr -d ' ' || true)
             [[ "${n:-0}" -ge 1 ]]
             ;;
@@ -721,7 +774,7 @@ run_subscriber() {
             # Retry only that abnormal exit once; ordinary protocol/time-out
             # failures remain failures, and a repeated abort is still surfaced.
             local status
-            if RUST_BACKTRACE="${RUST_BACKTRACE:-1}" "$PY" "$CLIENTS/python/smoke.py" \
+            if RUST_BACKTRACE="${RUST_BACKTRACE:-1}" run_client "$PY" "$CLIENTS/python/smoke.py" \
                 subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"; then
                 return 0
             else
@@ -729,17 +782,17 @@ run_subscriber() {
             fi
             [[ "$status" -eq 134 ]] || return "$status"
             echo "warning: moq-rs subscriber aborted during teardown; retrying once" >&2
-            RUST_BACKTRACE="${RUST_BACKTRACE:-1}" "$PY" "$CLIENTS/python/smoke.py" \
+            RUST_BACKTRACE="${RUST_BACKTRACE:-1}" run_client "$PY" "$CLIENTS/python/smoke.py" \
                 subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
             ;;
         go)
-            "$GO_SMOKE" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
+            run_client "$GO_SMOKE" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
             ;;
         swift)
-            "$SWIFT_SMOKE" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
+            run_client "$SWIFT_SMOKE" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
             ;;
         kotlin)
-            "$KOTLIN_SMOKE" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
+            run_client "$KOTLIN_SMOKE" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
             ;;
         c | c-pkgconfig | c-cmake)
             # Same subscribe-only client; the three cells differ only in how it
@@ -751,7 +804,7 @@ run_subscriber() {
                 c-pkgconfig) bin="$C_PC_SMOKE" ;;
                 c-cmake) bin="$C_CMAKE_SMOKE" ;;
             esac
-            "$bin" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
+            run_client "$bin" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
             ;;
         gst)
             # moqsrc exposes the broadcast's video as a Sometimes pad (video_%u,
@@ -765,24 +818,24 @@ run_subscriber() {
             # filesink unbuffered so the first frame reaches head immediately.
             local n
             n=$(GST_PLUGIN_PATH_1_0="$GST_PLUGIN_DIR" GST_REGISTRY_1_0="$TMP/gst-run-registry.bin" \
-                timeout -k 3 "$TIMEOUT" gst-launch-1.0 -q \
+                run_client timeout -k 3 "$TIMEOUT" gst-launch-1.0 -q \
                 moqsrc url="$URL" broadcast="$broadcast" ! filesink location=/dev/stdout buffer-mode=2 \
                 2>/dev/null | head -c 1 | wc -c | tr -d ' ' || true)
             [[ "${n:-0}" -ge 1 ]]
             ;;
-        js | js-esbuild | js-jsdelivr)
+        js-web | js-esbuild | js-jsdelivr)
             # Headless Chromium decodes via WebCodecs; exits 0 once a frame lands.
-            (cd "$CLIENTS/js" && bun driver.ts subscribe --variant "$(js_variant "$lang")" \
+            (cd "$CLIENTS/js" && run_client bun driver.ts subscribe --variant "$(js_variant "$lang")" \
                 --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT")
             ;;
         js-bun)
             # Native @moq/net via the WebTransport polyfill, under bun.
-            (cd "$CLIENTS/js-native" && bun subscribe.ts subscribe \
+            (cd "$CLIENTS/js-native" && run_client bun subscribe.ts subscribe \
                 --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT")
             ;;
         js-node)
             # Same, under node (tsx runs the TS directly).
-            (cd "$CLIENTS/js-native" && node --import tsx subscribe.ts subscribe \
+            (cd "$CLIENTS/js-native" && run_client node --import tsx subscribe.ts subscribe \
                 --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT")
             ;;
         *)
@@ -857,12 +910,17 @@ record() {
     return 0
 }
 
-reaches() {
-    # reaches <lang>: can this client dial $URL at all? The JS clients speak
-    # WebTransport (a browser, or the polyfill), so a raw-QUIC moqt:// endpoint
-    # is out of reach for them; that's a SKIP, not an interop failure.
+belongs() {
+    # belongs <lang>: this client is part of the matrix for $URL.
+    # The local relay runs whoever was requested. On external relays the browser
+    # and bun run only on WebTransport (http/https). @moq/web-transport is HTTP/3
+    # and has no raw-QUIC mode, so bun is not dialed at moqt://. Anything else is
+    # left out, not recorded as a skip.
+    [[ ${#EXTERNAL_RELAYS[@]} -eq 0 ]] && return 0
     case "$1" in
-        js | js-*) [[ "$URL" != moqt://* ]] ;;
+        js-web | js-esbuild | js-jsdelivr | js-node | js-bun)
+            [[ "$URL" == http://* || "$URL" == https://* ]]
+            ;;
         *) return 0 ;;
     esac
 }
@@ -873,10 +931,11 @@ run_round() {
     # without running it; either way cells are reported in --subscribers order.
     local pids=() names=() i sub
     for sub in "${SUB_LIST[@]}"; do
+        if ! belongs "$sub"; then
+            continue
+        fi
         names+=("$sub")
-        if ! reaches "$sub"; then
-            pids+=("SKIP:subscriber can't dial $URL")
-        elif is_broken "$sub"; then
+        if is_broken "$sub"; then
             pids+=("FAIL:subscriber client unavailable")
         else
             (run_subscriber "$sub" "$broadcast") >"$TMP/$pub-$sub.log" 2>&1 &
@@ -930,13 +989,19 @@ run_matrix() {
     fi
     for pub in "${PUB_LIST[@]}"; do
         broadcast="smoke-${pub}-$$-${RANDOM}.hang"
-        echo "=== publisher: $pub  broadcast: $broadcast ==="
-        if ! reaches "$pub"; then
-            for sub in "${SUB_LIST[@]}"; do record "$pub" "$sub" SKIP "publisher can't dial $URL"; done
+        if ! belongs "$pub"; then
             continue
         fi
+        echo "=== publisher: $pub  broadcast: $broadcast ==="
         if is_broken "$pub"; then
-            for sub in "${SUB_LIST[@]}"; do record "$pub" "$sub" FAIL "publisher client unavailable"; done
+            # Same filter as run_round: a client that does not belong on this
+            # URL stays omitted, not a failure invented by the broken publisher.
+            for sub in "${SUB_LIST[@]}"; do
+                if ! belongs "$sub"; then
+                    continue
+                fi
+                record "$pub" "$sub" FAIL "publisher client unavailable"
+            done
             continue
         fi
         start_publisher "$pub" "$broadcast"

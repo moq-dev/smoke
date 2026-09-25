@@ -247,7 +247,7 @@ summary .reason { margin-left: 22px; }
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 const mark = { PASS: "✓", FAIL: "✗", SKIP: "–" };
-const TRANSPORTS = ["WebTransport", "QUIC"];
+const TRANSPORTS = ["WebTransport", "QUIC", "WebSocket"];
 
 // Every endpoint by URL, filled by renderLatest for the tooltip and log dialog.
 const endpoints = new Map();
@@ -275,15 +275,17 @@ const sum = (ts) => ts.reduce((a, t) => ({ passed: a.passed + t.passed, total: a
 const endpointTally = (e) => tally(Object.values(e.cells));
 const complete = (es) => es.every((e) => e.ok || endpointTally(e).total === 0);
 
-// One row per implementation: the registry lists WebTransport and raw QUIC as
-// separate endpoints of the same relay.
+// One row per implementation. WebTransport, raw QUIC, and (for relays that opted
+// in) WebSocket are separate endpoints of the same relay.
 function relays(r) {
 	const byKey = new Map();
 	for (const e of r.endpoints) {
 		if (!byKey.has(e.key)) byKey.set(e.key, { key: e.key, name: e.name, required: e.required, endpoints: [] });
 		byKey.get(e.key).endpoints.push(e);
 	}
-	return [...byKey.values()];
+	return [...byKey.values()].sort(
+		(a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || a.key.localeCompare(b.key),
+	);
 }
 
 function renderLatest(r) {
@@ -328,7 +330,9 @@ function renderLatest(r) {
 	document.getElementById("legend").innerHTML =
 		`Each cell counts the publisher → subscriber pairs whose bytes flowed through that endpoint ` +
 		`(publishers: ${esc(clients(0))}; subscribers: ${esc(clients(1))}). ` +
-		`Pairs a client can't dial are left out: the JS clients speak only WebTransport. ` +
+		`js-web is the browser and js-bun is the WebTransport polyfill. Both run only on WebTransport. ` +
+		`A client that does not belong on a transport is left out of that column. ` +
+		`WebSocket is its own column, and only for relays that opted in. ` +
 		`Hover a cell for what failed; click it for the logs.`;
 }
 
