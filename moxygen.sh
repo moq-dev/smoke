@@ -22,6 +22,16 @@ RELAY_PID=""
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# build_git <repo> <package> <dir>: build one package from a repo's default
+# branch with its committed Cargo.lock, into <dir>/target/release. A plain
+# `cargo build` in a checkout rather than `cargo install --git`: a compile cache
+# (mbx in CI) reuses unchanged crates across builds, but not across installs.
+build_git() {
+    local repo="$1" package="$2" dir="$3"
+    git clone --quiet --depth 1 "$repo" "$dir" &&
+        cargo build --quiet --release --locked --manifest-path "$dir/Cargo.toml" -p "$package"
+}
+
 # shellcheck disable=SC2329  # invoked indirectly via 'trap cleanup EXIT'
 kill_tree() {
     local pid="$1" child
@@ -43,6 +53,7 @@ for tool in curl openssl pgrep timeout "$DOCKER"; do
 done
 if [[ -z "$MOQ_RELAY" ]]; then
     have cargo || missing+=("cargo")
+    have git || missing+=("git")
 fi
 if [[ ${#missing[@]} -gt 0 ]]; then
     echo "error: missing required tools: ${missing[*]}" >&2
@@ -56,10 +67,8 @@ fi
 
 if [[ -z "$MOQ_RELAY" ]]; then
     echo "building moq-relay from $MOQ_REPO (latest default branch)..."
-    if cargo install --quiet --locked --git "$MOQ_REPO" \
-        --root "$TMP/moq-install" --target-dir "$TMP/moq-target" moq-relay \
-        >"$TMP/moq-relay-build.log" 2>&1; then
-        MOQ_RELAY="$TMP/moq-install/bin/moq-relay"
+    if build_git "$MOQ_REPO" moq-relay "$TMP/moq" >"$TMP/moq-relay-build.log" 2>&1; then
+        MOQ_RELAY="$TMP/moq/target/release/moq-relay"
     else
         echo "error: failed to build moq-relay" >&2
         sed 's/^/  /' "$TMP/moq-relay-build.log" >&2 || true

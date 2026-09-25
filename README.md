@@ -54,7 +54,7 @@ The **GStreamer** client downloads the latest `moq-gst` plugin tarball, points `
 The Rust binaries (`moq-relay`, `moq`) ship through five channels that deliver the *same* binaries. CI treats each as a separate test where the OS supports it: Linux exercises **apt**, **cargo**, **nix**, **docker**; macOS exercises **brew**, **cargo**, **nix**. `smoke.sh` itself just takes whatever is on `PATH` (or `RELAY_BIN`/`MOQ_BIN`); the channel is chosen by how the binaries are provided:
 
 - **cargo** / **brew** / **apt** put the binaries on `PATH` (`cargo install moq-relay moq-cli` installs `moq-relay` and `moq`, etc.).
-- **nix** builds them from the moq flake (`just nix-channel`), the same package output `nix run github:moq-dev/moq#moq` resolves. The moq flake is referenced ad-hoc with `--refresh`, so the moq version is always the latest default-branch build, never locked by this repo.
+- **nix** builds them from the moq flake (`just nix-channel`), the same package output `nix run github:moq-dev/moq#moq` resolves. The moq flake is referenced ad-hoc with `--refresh`, so the moq version is always the latest default-branch build, never locked by this repo. CI pushes each build it makes to the `kixelated` cachix cache (moq's own CI only pushes release tags), so later runs download it instead of recompiling until moq's `main` moves.
 - **docker** points `RELAY_BIN`/`MOQ_BIN` at the wrapper scripts in [`clients/docker/`](clients/docker), which `docker run --network host` the published [`moqdev/moq-relay`](https://hub.docker.com/r/moqdev/moq-relay) + [`moqdev/moq-cli`](https://hub.docker.com/r/moqdev/moq-cli) images (`:latest`, pulled fresh). Host networking lets the containerised relay bind the ports the orchestrator and the cli containers reach on `127.0.0.1`, so the committed `smoke.toml` works unchanged. Linux-only (a native Docker daemon); the other language clients still install from their own registries, so this run also proves the Docker relay routes between every implementation. Override the runtime with `SMOKE_DOCKER=podman`.
 
 The **browser** client is itself three delivery variants of the *same* page, run as separate matrix cells, to catch breakage specific to how the package is consumed:
@@ -180,6 +180,8 @@ just token-full       # full matrix: rust, js-node, js-bun + rust-docker (the
 ## Always the latest moq packages (no package lock files)
 
 To test what a user gets today, this repo commits **no package lock files** (`go.sum`, `bun.lock`, `Cargo.lock`, `uv.lock`, ... are gitignored). Every run re-resolves the moq packages to their latest published versions: `@moq/*` at the `latest` npm tag, `moq-rs` via `uv pip install`, `moq-go` via `go get @latest`, and the **nix** channel builds the moq flake ad-hoc with `--refresh`. The Cloudflare suite similarly resolves both `cloudflare/moq-rs` and `moq-dev/moq` from their unpinned Git default branches.
+
+CI caches builds without pinning anything: the **cargo** channel's installed binaries are keyed on the newest crates.io versions (so a new release always misses and installs for real), and the Git-HEAD relay builds in `cloudflare.sh` / `moxygen.sh` go through [mbx](https://github.com/jdx/mr-boxington), which reuses unchanged crates and recompiles the rest.
 
 `flake.lock` *is* committed: it pins the dev **toolchain** (nixpkgs), not the moq packages, so the shell is reproducible. The moq flake is never an input here, so locking the toolchain never locks moq.
 
