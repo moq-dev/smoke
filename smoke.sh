@@ -463,8 +463,10 @@ echo "moq:     $(command -v "$MOQ")"
 
 # moq-cli 0.12 renamed --client-connect to --connect and rejects the old name.
 # Pick whichever this build accepts until every channel ships 0.12.
+# `--connect-websocket-enabled` contains `--connect`, and `-` is a word
+# boundary, so the match has to end on the option that takes the URL.
 moq_help=$("$MOQ" --help 2>&1 || true)
-if grep -qE -- '(^|[[:space:]])--connect\b' <<<"$moq_help"; then
+if grep -qE -- '(^|[[:space:]])--connect([[:space:]=]|$)' <<<"$moq_help"; then
     MOQ_CONNECT=--connect
 else
     MOQ_CONNECT=--client-connect
@@ -495,8 +497,10 @@ run_client() {
 }
 
 rust_moq() {
+    # Clap takes the argv after --connect as the URL. A flag in that position
+    # is not a value, so the websocket switch goes before --connect.
     if ! allow_websocket && [[ ${#MOQ_WS_OFF[@]} -gt 0 ]]; then
-        run_client "$MOQ" "$MOQ_CONNECT" "${MOQ_WS_OFF[@]}" "$@"
+        run_client "$MOQ" "${MOQ_WS_OFF[@]}" "$MOQ_CONNECT" "$@"
     else
         run_client "$MOQ" "$MOQ_CONNECT" "$@"
     fi
@@ -755,11 +759,12 @@ run_subscriber() {
             local -a ws=()
             # stderr stays in the cell log: it names the negotiated version.
             # timeout is a binary, so the flag has to be on its argv; the env
-            # prefix still reaches moq through it.
+            # prefix still reaches moq through it. The websocket switch goes
+            # before --connect so clap takes the URL as that option's value.
             if ! allow_websocket && [[ ${#MOQ_WS_OFF[@]} -gt 0 ]]; then
                 ws=("${MOQ_WS_OFF[@]}")
             fi
-            n=$(run_client timeout -k 3 "$TIMEOUT" "$MOQ" "$MOQ_CONNECT" ${ws[@]+"${ws[@]}"} "$URL" --broadcast "$broadcast" \
+            n=$(run_client timeout -k 3 "$TIMEOUT" "$MOQ" ${ws[@]+"${ws[@]}"} "$MOQ_CONNECT" "$URL" --broadcast "$broadcast" \
                 export fmp4 | head -c 1 | wc -c | tr -d ' ' || true)
             [[ "${n:-0}" -ge 1 ]]
             ;;
