@@ -10,6 +10,10 @@
 # go down, and change underneath us, so most are OPTIONAL: they're reported in the
 # summary but never fail the run. Only --required implementations gate the exit
 # code (default: moq-dev's own public relay).
+#
+# WebSocket (qmux) is a moq-dev binding. WEBSOCKET_KEYS opts those relays in: each
+# of their http(s) endpoints also runs as ws(s), its own column. Every other relay
+# is dialed only on the transports it registered.
 set -euo pipefail
 
 SMOKE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -23,6 +27,9 @@ EXTRA_ENDPOINTS=(
     $'moq-rs\tmoq-rs (draft-16)\thttps://draft-16.cloudflare.mediaoverquic.com/moq'
     $'moq-rs\tmoq-rs (draft-16)\tmoqt://draft-16.cloudflare.mediaoverquic.com:443'
 )
+# Relays that speak moq-dev's WebSocket binding. Each of their http(s) endpoints
+# gains a ws(s) twin. Add a key here when that implementation actually serves it.
+WEBSOCKET_KEYS="moq-dev-rs,stitcher-moq"
 ONLY=""
 JSON_OUT=""
 LOGS_OUT=""
@@ -87,6 +94,20 @@ in_list() {
     [[ ",$2," == *",$1,"* ]]
 }
 
+# websocket_url <url>: the WebSocket twin of an http(s) endpoint, or nothing.
+websocket_url() {
+    case "$1" in
+        https://*) printf 'wss://%s\n' "${1#https://}" ;;
+        http://*) printf 'ws://%s\n' "${1#http://}" ;;
+        *) return 1 ;;
+    esac
+}
+
+seen_url() {
+    # seen_url <url>: true when selected.tsv already has this endpoint.
+    awk -F '\t' -v url="$1" '$3 == url { found = 1 } END { exit !found }' "$TMP/selected.tsv"
+}
+
 # One row per endpoint: key, display name, url. Deduplicated by URL (an entry
 # can list the same URL twice under different transport labels); the transport
 # is taken from the URL scheme rather than the registry's label.
@@ -105,8 +126,17 @@ relay_args=()
 : >"$TMP/selected.tsv"
 while IFS=$'\t' read -r key name url; do
     [[ -z "$ONLY" ]] || in_list "$key" "$ONLY" || continue
+    if seen_url "$url"; then
+        continue
+    fi
     relay_args+=(--relay "$url")
     printf '%s\t%s\t%s\n' "$key" "$name" "$url" >>"$TMP/selected.tsv"
+    # The WebSocket column. smoke.sh dials a ws(s) URL as WebSocket and keeps the
+    # fallback off for every other external URL, so this is the only attempt.
+    if in_list "$key" "$WEBSOCKET_KEYS" && ws=$(websocket_url "$url") && ! seen_url "$ws"; then
+        relay_args+=(--relay "$ws")
+        printf '%s\t%s\t%s\n' "$key" "$name" "$ws" >>"$TMP/selected.tsv"
+    fi
 done <"$TMP/endpoints.tsv"
 
 # A required implementation must not pass just because none of its endpoints
@@ -168,7 +198,9 @@ jq -n --rawfile selected "$TMP/selected.tsv" --rawfile results "$TMP/results.tsv
                 key: $key,
                 name: $name,
                 url: $url,
-                transport: (if $url | startswith("moqt:") then "QUIC" else "WebTransport" end),
+                transport: (if $url | startswith("moqt:") then "QUIC"
+                    elif $url | test("^wss?:") then "WebSocket"
+                    else "WebTransport" end),
                 required: any($req[]; . == $key),
                 ok: (any($done[]; . == $url) and any($mine[]; .[3] == "PASS") and all($mine[]; .[3] != "FAIL")),
                 versions: ([$mine[] | .[4], .[5]] | map(select(. != null and . != "")) | unique),

@@ -69,6 +69,18 @@ const browser = await chromium.launch({
 let code = 1;
 try {
 	const page = await browser.newPage();
+	// The published elements race a WebSocket fallback and expose no switch for it.
+	// smoke.sh sets this on external relays that are not the WebSocket column, so
+	// the page cannot open one. A ws(s) URL leaves the constructor alone.
+	if (process.env.SMOKE_WEBSOCKET === "0") {
+		await page.addInitScript(`
+			const dead = function WebSocket() {
+				throw new Error("WebSocket is disabled for this relay");
+			};
+			globalThis.WebSocket = dead;
+			globalThis.WebSocketStream = dead;
+		`);
+	}
 	page.on("console", (m) => console.error(`[page] ${m.text()}`));
 	page.on("pageerror", (e) => console.error(`[page error] ${e.message}`));
 	await page.goto(pageUrl, { waitUntil: "load" });

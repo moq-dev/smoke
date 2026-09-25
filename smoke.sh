@@ -15,7 +15,9 @@
 #
 # With --relay URL (repeatable) it skips the local relay and runs the same matrix
 # through each external relay instead; relays.sh drives that mode against the
-# public relays in the moq-interop-runner registry.
+# public relays in the moq-interop-runner registry. An external http(s) or moqt
+# URL is that transport alone: the WebSocket fallback stays off. A ws(s) URL is
+# the WebSocket column, which relays.sh only adds for relays that opted in.
 set -euo pipefail
 
 SMOKE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -464,6 +466,38 @@ if grep -qE -- '(^|[[:space:]])--connect\b' <<<"$moq_help"; then
 else
     MOQ_CONNECT=--client-connect
 fi
+# Present once moq-cli grew `--connect-websocket-enabled`. Older binaries ignore
+# the env var below and still race the fallback; they reject an unknown flag.
+MOQ_WS_OFF=()
+if grep -qF -- '--connect-websocket-enabled' <<<"$moq_help"; then
+    MOQ_WS_OFF=(--connect-websocket-enabled=false)
+fi
+
+# The local relay may race its WebSocket binding. An external ws(s) URL is the
+# WebSocket column. Every other external URL is WebTransport or raw QUIC.
+allow_websocket() {
+    [[ ${#EXTERNAL_RELAYS[@]} -eq 0 || "$URL" == ws://* || "$URL" == wss://* ]]
+}
+
+# Run a client. When this URL must not race WebSocket, say so in the environment.
+# The Rust CLI reads MOQ_CONNECT_WEBSOCKET_ENABLED. The browser page and native JS
+# read SMOKE_WEBSOCKET. Python, Go, Swift, Kotlin, and C have no published switch
+# for it yet; the relays lane does not use them.
+run_client() {
+    if allow_websocket; then
+        "$@"
+    else
+        SMOKE_WEBSOCKET=0 MOQ_CONNECT_WEBSOCKET_ENABLED=false "$@"
+    fi
+}
+
+rust_moq() {
+    if ! allow_websocket && [[ ${#MOQ_WS_OFF[@]} -gt 0 ]]; then
+        run_client "$MOQ" "$MOQ_CONNECT" "${MOQ_WS_OFF[@]}" "$@"
+    else
+        run_client "$MOQ" "$MOQ_CONNECT" "$@"
+    fi
+}
 
 if needs python; then
     echo "installing python client (moq-rs from PyPI)..."
@@ -679,20 +713,20 @@ start_publisher() {
     local lang="$1" broadcast="$2" log="$TMP/pub-$1.log"
     case "$lang" in
         rust)
-            (ffmpeg_h264 | "$MOQ" "$MOQ_CONNECT" "$URL" --broadcast "$broadcast" import avc3) >"$log" 2>&1 &
+            (ffmpeg_h264 | rust_moq "$URL" --broadcast "$broadcast" import avc3) >"$log" 2>&1 &
             ;;
         python)
-            (ffmpeg_h264 | "$PY" "$CLIENTS/python/smoke.py" \
+            (ffmpeg_h264 | run_client "$PY" "$CLIENTS/python/smoke.py" \
                 publish --url "$URL" --broadcast "$broadcast") >"$log" 2>&1 &
             ;;
         go)
-            (ffmpeg_h264 | "$GO_SMOKE" publish --url "$URL" --broadcast "$broadcast") >"$log" 2>&1 &
+            (ffmpeg_h264 | run_client "$GO_SMOKE" publish --url "$URL" --broadcast "$broadcast") >"$log" 2>&1 &
             ;;
         js | js-esbuild | js-jsdelivr)
             # Headless Chromium encodes its own H.264 from a fake camera via
             # WebCodecs (lazily, once a subscriber creates demand). The variant
             # selects how the published packages reach the page.
-            (cd "$CLIENTS/js" && bun driver.ts publish --variant "$(js_variant "$lang")" \
+            (cd "$CLIENTS/js" && run_client bun driver.ts publish --variant "$(js_variant "$lang")" \
                 --url "$URL" --broadcast "$broadcast") >"$log" 2>&1 &
             ;;
         *)
@@ -710,8 +744,14 @@ run_subscriber() {
             # moq only handles SIGINT, so -k forces SIGKILL if it ignores the
             # SIGTERM that fires when no data arrives within the timeout.
             local n
+            local -a ws=()
             # stderr stays in the cell log: it names the negotiated version.
-            n=$(timeout -k 3 "$TIMEOUT" "$MOQ" "$MOQ_CONNECT" "$URL" --broadcast "$broadcast" \
+            # timeout is a binary, so the flag has to be on its argv; the env
+            # prefix still reaches moq through it.
+            if ! allow_websocket && [[ ${#MOQ_WS_OFF[@]} -gt 0 ]]; then
+                ws=("${MOQ_WS_OFF[@]}")
+            fi
+            n=$(run_client timeout -k 3 "$TIMEOUT" "$MOQ" "$MOQ_CONNECT" ${ws[@]+"${ws[@]}"} "$URL" --broadcast "$broadcast" \
                 export fmp4 | head -c 1 | wc -c | tr -d ' ' || true)
             [[ "${n:-0}" -ge 1 ]]
             ;;
@@ -721,7 +761,7 @@ run_subscriber() {
             # Retry only that abnormal exit once; ordinary protocol/time-out
             # failures remain failures, and a repeated abort is still surfaced.
             local status
-            if RUST_BACKTRACE="${RUST_BACKTRACE:-1}" "$PY" "$CLIENTS/python/smoke.py" \
+            if RUST_BACKTRACE="${RUST_BACKTRACE:-1}" run_client "$PY" "$CLIENTS/python/smoke.py" \
                 subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"; then
                 return 0
             else
@@ -729,17 +769,17 @@ run_subscriber() {
             fi
             [[ "$status" -eq 134 ]] || return "$status"
             echo "warning: moq-rs subscriber aborted during teardown; retrying once" >&2
-            RUST_BACKTRACE="${RUST_BACKTRACE:-1}" "$PY" "$CLIENTS/python/smoke.py" \
+            RUST_BACKTRACE="${RUST_BACKTRACE:-1}" run_client "$PY" "$CLIENTS/python/smoke.py" \
                 subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
             ;;
         go)
-            "$GO_SMOKE" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
+            run_client "$GO_SMOKE" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
             ;;
         swift)
-            "$SWIFT_SMOKE" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
+            run_client "$SWIFT_SMOKE" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
             ;;
         kotlin)
-            "$KOTLIN_SMOKE" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
+            run_client "$KOTLIN_SMOKE" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
             ;;
         c | c-pkgconfig | c-cmake)
             # Same subscribe-only client; the three cells differ only in how it
@@ -751,7 +791,7 @@ run_subscriber() {
                 c-pkgconfig) bin="$C_PC_SMOKE" ;;
                 c-cmake) bin="$C_CMAKE_SMOKE" ;;
             esac
-            "$bin" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
+            run_client "$bin" subscribe --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT"
             ;;
         gst)
             # moqsrc exposes the broadcast's video as a Sometimes pad (video_%u,
@@ -765,24 +805,24 @@ run_subscriber() {
             # filesink unbuffered so the first frame reaches head immediately.
             local n
             n=$(GST_PLUGIN_PATH_1_0="$GST_PLUGIN_DIR" GST_REGISTRY_1_0="$TMP/gst-run-registry.bin" \
-                timeout -k 3 "$TIMEOUT" gst-launch-1.0 -q \
+                run_client timeout -k 3 "$TIMEOUT" gst-launch-1.0 -q \
                 moqsrc url="$URL" broadcast="$broadcast" ! filesink location=/dev/stdout buffer-mode=2 \
                 2>/dev/null | head -c 1 | wc -c | tr -d ' ' || true)
             [[ "${n:-0}" -ge 1 ]]
             ;;
         js | js-esbuild | js-jsdelivr)
             # Headless Chromium decodes via WebCodecs; exits 0 once a frame lands.
-            (cd "$CLIENTS/js" && bun driver.ts subscribe --variant "$(js_variant "$lang")" \
+            (cd "$CLIENTS/js" && run_client bun driver.ts subscribe --variant "$(js_variant "$lang")" \
                 --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT")
             ;;
         js-bun)
             # Native @moq/net via the WebTransport polyfill, under bun.
-            (cd "$CLIENTS/js-native" && bun subscribe.ts subscribe \
+            (cd "$CLIENTS/js-native" && run_client bun subscribe.ts subscribe \
                 --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT")
             ;;
         js-node)
             # Same, under node (tsx runs the TS directly).
-            (cd "$CLIENTS/js-native" && node --import tsx subscribe.ts subscribe \
+            (cd "$CLIENTS/js-native" && run_client node --import tsx subscribe.ts subscribe \
                 --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT")
             ;;
         *)

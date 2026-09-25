@@ -51,7 +51,14 @@ async function run(): Promise<void> {
 	// Since @moq/net 0.4.0 a session doesn't consume broadcasts itself: it feeds the
 	// peer's announcements into an origin, and consumers request paths from that.
 	const origin = new Moq.Origin.Producer();
-	const connection = await Moq.Connection.connect({ url: new URL(url as string), consume: origin, signal: abort.signal });
+	// smoke.sh sets this on external relays that are not the WebSocket column.
+	const websocket = process.env.SMOKE_WEBSOCKET === "0" ? { enabled: false as const } : undefined;
+	const connection = await Moq.Connection.connect({
+		url: new URL(url as string),
+		consume: origin,
+		signal: abort.signal,
+		websocket,
+	});
 	activeConnection = connection;
 	// Same shape as the Rust clients' log line, so the harness records the version.
 	console.error(`connected version=${connection.version}`);

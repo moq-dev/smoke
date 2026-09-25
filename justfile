@@ -32,7 +32,8 @@ moxygen:
 
 # Publish/subscribe through every public relay in the moq-interop-runner
 # registry (Cloudflare, moxygen, imquic, ...). Only moq-dev's relay is required;
-# the rest are reported in a summary table. Pass flags through, e.g.
+# the rest are reported in a summary table. WebSocket is a separate column for
+# the relays named in relays.sh WEBSOCKET_KEYS. Pass flags through, e.g.
 #   just relays --only moq-rs-draft-18 --publishers rust,js --subscribers rust,js
 relays *args:
     ./relays.sh {{ args }}
