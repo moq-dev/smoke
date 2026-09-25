@@ -29,7 +29,8 @@ have() { command -v "$1" >/dev/null 2>&1; }
 build_git() {
     local repo="$1" package="$2" dir="$3"
     git clone --quiet --depth 1 "$repo" "$dir" &&
-        cargo build --quiet --release --locked --manifest-path "$dir/Cargo.toml" -p "$package"
+        cargo build --quiet --release --locked --manifest-path "$dir/Cargo.toml" -p "$package" \
+            --target-dir "$dir/target"
 }
 
 # shellcheck disable=SC2329  # invoked indirectly via 'trap cleanup EXIT'

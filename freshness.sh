@@ -53,17 +53,17 @@ if [[ "$ver" == "latest" ]]; then note ok "@moq/auth -> \"$ver\""; else
 fi
 # The token Docker image must be the unpinned (:latest) tag, pulled fresh each run.
 # shellcheck disable=SC2016  # grepping for these literal strings in token.sh; the $vars must NOT expand here
-if grep -qF 'DOCKER_TOKEN_IMAGE:-moqdev/moq-cli}' token.sh && grep -qF '"$DOCKER" pull "$DOCKER_TOKEN_IMAGE"' token.sh; then
-    note ok "moqdev/moq-cli (token cell) -> :latest (pulled each run)"
+if grep -qF 'DOCKER_TOKEN_IMAGE:-moqdev/moq}' token.sh && grep -qF '"$DOCKER" pull "$DOCKER_TOKEN_IMAGE"' token.sh; then
+    note ok "moqdev/moq (token cell) -> :latest (pulled each run)"
 else
-    note FAIL "token.sh no longer pulls an unpinned moqdev/moq-cli :latest"
+    note FAIL "token.sh no longer pulls an unpinned moqdev/moq :latest"
     fail=1
 fi
 # The media Docker channel (relay + cli wrappers) must use the unpinned (:latest)
 # images, and CI must pull them fresh.
-if grep -qF 'moqdev/moq-relay}' clients/docker/moq-relay && grep -qF 'moqdev/moq-cli}' clients/docker/moq &&
+if grep -qF 'moqdev/moq-relay}' clients/docker/moq-relay && grep -qF 'moqdev/moq}' clients/docker/moq &&
     grep -qF 'docker pull moqdev/moq-relay' .github/workflows/smoke.yml; then
-    note ok "moqdev/moq-relay + moqdev/moq-cli -> :latest (pulled each run)"
+    note ok "moqdev/moq-relay + moqdev/moq -> :latest (pulled each run)"
 else
     note FAIL "the moqdev relay/cli Docker images are no longer unpinned :latest + pulled fresh"
     fail=1

@@ -54,7 +54,7 @@ jobs:
           # The moq flake is itself a public channel (nix run github:moq-dev/moq).
           - os: ubuntu-latest
             channel: nix
-          # Docker Hub (moqdev/moq-relay + moqdev/moq-cli). Linux only: the
+          # Docker Hub (moqdev/moq-relay + moqdev/moq). Linux only: the
           # wrappers use `--network host`, which needs a native Docker daemon
           # (GitHub's macOS runners have none).
           - os: ubuntu-latest
@@ -130,12 +130,16 @@ jobs:
       - name: Resolve latest crate versions (cargo)
         id: crates
         if: matrix.channel == 'cargo'
+        # A failed lookup must fail the step: a `null` key could otherwise
+        # exact-hit a stale entry and skip the install after a new release.
         run: |
           latest() {
             curl -sfL --retry 3 "https://index.crates.io/mo/q-/$1" |
-              jq -rs '[.[] | select((.yanked | not) and (.vers | contains("-") | not))] | last.vers'
+              jq -ers '[.[] | select((.yanked | not) and (.vers | contains("-") | not))] | last.vers'
           }
-          echo "key=cargo-bin-${RUNNER_OS}-moq-relay-$(latest moq-relay)-moq-cli-$(latest moq-cli)-$(rustc -V | tr -c 'a-zA-Z0-9.\n' -)" >> "$GITHUB_OUTPUT"
+          relay=$(latest moq-relay)
+          cli=$(latest moq-cli)
+          echo "key=cargo-bin-${RUNNER_OS}-moq-relay-$relay-moq-cli-$cli-$(rustc -V | tr -c 'a-zA-Z0-9.\n' -)" >> "$GITHUB_OUTPUT"
 
       - name: Cache installed moq binaries (cargo)
         id: cargo-cache
@@ -217,7 +221,7 @@ jobs:
         # preinstalled on the Linux runners.
         run: |
           docker pull moqdev/moq-relay
-          docker pull moqdev/moq-cli
+          docker pull moqdev/moq
           {
             echo "RELAY_BIN=$PWD/clients/docker/moq-relay"
             echo "MOQ_BIN=$PWD/clients/docker/moq"
@@ -267,7 +271,7 @@ jobs:
       # cross-verifies. `moq auth` rides the same channel as moq-relay/moq
       # (cargo/apt/brew/nix, on PATH or MOQ_BIN); @moq/auth comes from npm and
       # runs under both node and bun; rust-docker runs `auth` in the
-      # moqdev/moq-cli image. The negative pass inside token.sh confirms each verifier rejects
+      # moqdev/moq image. The negative pass inside token.sh confirms each verifier rejects
       # tampered tokens and the wrong key.
       - name: Token interop
         # Independent of the media matrix, so a red media cell mustn't hide it.
