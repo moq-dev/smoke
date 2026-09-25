@@ -190,15 +190,18 @@ gen() {
 }
 
 sign() {
-    local impl="$1" signkey="$2" algo="$3" cli
+    local impl="$1" signkey="$2" algo="$3" cli suffix="/**"
     cli=$(cli_for "$impl") || {
         echo "unknown signer: $impl" >&2
         return 1
     }
+    # The legacy CLI takes prefixes; current CLIs take patterns. A subtree has
+    # the same meaning in both formats and can be written as put/get on the wire.
+    if [[ "$impl" == rust-legacy || "${4:-}" == exact ]]; then suffix=""; fi
     # Same flags for the PATH binary and the Docker image; JS uses the same ones too.
     # shellcheck disable=SC2086
     $cli sign --key "$signkey" --root "$ROOT" \
-        --publish "pub-canary-$algo" --subscribe "sub-canary-$algo"
+        --publish "pub-canary-$algo$suffix" --subscribe "sub-canary-$algo$suffix"
 }
 
 verify() {
@@ -440,6 +443,43 @@ else
             fi
         done
     done
+fi
+
+# Exact patterns cannot be represented by legacy put/get prefixes. Prove the
+# legacy verifier accepts this key with a legacy subtree token first.
+if needs rust-legacy && ! is_broken rust-legacy; then
+    exact_gen=""
+    for g in "${GEN_LIST[@]}"; do
+        if [[ "$g" != rust-legacy ]] && ! is_broken "$g"; then
+            exact_gen="$g"
+            break
+        fi
+    done
+    if [[ -n "$exact_gen" ]]; then
+        algo="${ALGO_LIST[0]}"
+        keydir="$TMP/exact-$exact_gen-$algo"
+        subtree="$keydir/subtree.jwt"
+        exact="$keydir/exact.jwt"
+        legacy_out="$keydir/legacy.log"
+        current_out="$keydir/current.log"
+        if ! gen "$exact_gen" "$algo" "$keydir" >"$keydir.gen.log" 2>&1 ||
+            ! sign rust-legacy "$keydir/sign.jwk" "$algo" >"$subtree" 2>"$keydir.sign.log" ||
+            ! verify rust-legacy "$keydir/verify.jwk" "$subtree" >"$legacy_out" 2>&1 ||
+            ! claims_ok "$legacy_out" "$algo"; then
+            echo "  FAIL  reject(rust-legacy, exact): subtree setup failed"
+            overall=1
+        elif ! sign "$exact_gen" "$keydir/sign.jwk" "$algo" exact >"$exact" 2>"$keydir.exact.log" ||
+            ! verify "$exact_gen" "$keydir/verify.jwk" "$exact" >"$current_out" 2>&1 ||
+            ! claims_ok "$current_out" "$algo"; then
+            echo "  FAIL  reject(rust-legacy, exact): current token setup failed"
+            overall=1
+        elif verify rust-legacy "$keydir/verify.jwk" "$exact" >"$legacy_out" 2>&1; then
+            echo "  FAIL  reject(rust-legacy, exact): accepted an exact-pattern token"
+            overall=1
+        else
+            echo "  PASS  reject(rust-legacy, exact): exact-pattern token refused"
+        fi
+    fi
 fi
 
 if [[ "$overall" -eq 0 ]]; then
