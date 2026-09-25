@@ -152,7 +152,7 @@ jobs:
         # moq flake is referenced ad-hoc here, so its version is never locked.
         run: |
           relay=$(nix build --refresh --no-link --print-out-paths 'github:moq-dev/moq#moq-relay')
-          cli=$(nix build --refresh --no-link --print-out-paths 'github:moq-dev/moq#moq-cli')
+          cli=$(nix build --refresh --no-link --print-out-paths 'github:moq-dev/moq#moq')
           {
             echo "RELAY_BIN=$relay/bin/moq-relay"
             echo "MOQ_BIN=$cli/bin/moq"
