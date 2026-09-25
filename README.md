@@ -32,20 +32,20 @@ Meta's moxygen is also tested separately from the Hang media matrix because its 
 
 ## External relays
 
-[`relays.sh`](relays.sh) points the same published clients at the **public relays other implementations run**, instead of a local `moq-relay`. The endpoint list is every `roles.relay.remote` entry in the [moq-interop-runner](https://github.com/englishm/moq-interop-runner) registry (`implementations.json`), fetched live on each run, so a newly registered relay (e.g. Cloudflare's draft-18 `draft-18-interop.cloudflare.mediaoverquic.com`) shows up without a change here. Known public endpoints the registry is missing (Cloudflare's draft-16 relay) are listed in `EXTRA_ENDPOINTS` at the top of `relays.sh`. For each endpoint, `smoke.sh --relay URL` runs the usual publisher × subscriber matrix: publish an H.264 broadcast, confirm each subscriber gets bytes back through that relay. The moq clients negotiate whichever IETF moq-transport draft the relay speaks; a `moqt://` (raw QUIC) endpoint is skipped for the JS clients, which only speak WebTransport.
+[`relays.sh`](relays.sh) points the published Rust (`moq`), browser (`js`), and bun (`js-bun`, subscribe only) clients at the **public relays other implementations run**, instead of a local `moq-relay`. The endpoint list is every `roles.relay.remote` entry in the [moq-interop-runner](https://github.com/englishm/moq-interop-runner) registry (`implementations.json`), fetched live on each run, so a newly registered relay (e.g. Cloudflare's draft-18 `draft-18-interop.cloudflare.mediaoverquic.com`) shows up without a change here. Known public endpoints the registry is missing (Cloudflare's draft-16 relay) are listed in `EXTRA_ENDPOINTS` at the top of `relays.sh`. For each endpoint, `smoke.sh --relay URL` runs the usual publisher × subscriber matrix: publish an H.264 broadcast, confirm each subscriber gets bytes back through that relay. The moq clients negotiate whichever IETF moq-transport draft the relay speaks; a `moqt://` (raw QUIC) endpoint is skipped for the JS clients, which only speak WebTransport (Chromium's, or the `@moq/web-transport` polyfill's HTTP/3 under bun; neither has a raw-QUIC mode).
 
 Third-party relays run different drafts, restart, and let certificates expire, so they are **optional**: each one is a row in a summary table (printed, and written to the GitHub job summary), and a red row doesn't fail the run. Only `--required` implementations gate the exit code; the default is `moq-dev-rs`, moq-dev's own `cdn.moq.dev`.
 
-Each cell also records the wire version each client negotiated (`moq-lite-05`, `moq-transport-18`, ...), from the Rust clients' `connected version=` log line and the browser page's WebTransport subprotocol. `--json FILE` writes the results as JSON; nightly CI renders them with [`report/index.html`](report/index.html) (assembled by `report/build.sh`, with a rolling 60-run history) and publishes the page to GitHub Pages.
+Each cell also records the wire version each client negotiated (`moq-lite-05`, `moq-transport-18`, ...), from the Rust clients' `connected version=` log line and the browser page's WebTransport subprotocol, plus a one-line failure reason (the first error in the subscriber's log, else the publisher's). `--json FILE` writes the results as JSON and `--logs DIR` keeps every cell's subscriber and publisher log; nightly CI renders both with [`report/index.html`](report/index.html) (assembled by `report/build.sh`, with a rolling 60-run history) and publishes the page to [GitHub Pages](https://moq-dev.github.io/smoke/). The page has one row per relay with a passing/total pair count per transport: hover a count for what failed, click it for the logs.
 
 ```bash
 just relays                                   # rust publish/subscribe through every public relay
 just relays --only moq-rs-draft-18            # just Cloudflare's draft-18 relay
-./relays.sh --publishers rust,js-vite --subscribers rust,js-vite --timeout 30   # what CI runs
+./relays.sh --publishers rust,js --subscribers rust,js,js-bun --timeout 30 --json results.json --logs logs   # what CI runs
 ./relays.sh --required moq-dev-rs,moq-rs-draft-18   # also gate on Cloudflare's relay
 ```
 
-The **Native JS** client runs the JS packages *outside* a browser, where there's no native WebTransport, using moq's own `@moq/web-transport` polyfill (a prebuilt NAPI QUIC/HTTP3 addon). It runs as two cells, `js-native-node` and `js-native-bun`, to catch runtime-specific breakage. Subscribe only here too: publishing media needs a WebCodecs encoder, which a native JS runtime lacks (reading raw container frames doesn't).
+The **Native JS** client runs the JS packages *outside* a browser, where there's no native WebTransport, using moq's own `@moq/web-transport` polyfill (a prebuilt NAPI QUIC/HTTP3 addon). It runs as two cells, `js-node` and `js-bun`, to catch runtime-specific breakage. Subscribe only here too: publishing media needs a WebCodecs encoder, which a native JS runtime lacks (reading raw container frames doesn't).
 
 Swift, Kotlin, C, and GStreamer **subscribe only**. The FFI wrappers (Swift/Kotlin/C) publish through the streaming importer (`publish_media_stream`), which isn't in the published 0.2.x FFI yet, so they can only subscribe until it ships; the GStreamer cell drives `moqsrc` (publishing via `moqsink` needs an encoder + request-pad muxing — a follow-up). Rust and the browser publish today.
 
@@ -59,7 +59,7 @@ The Rust binaries (`moq-relay`, `moq`) ship through five channels that deliver t
 
 The **browser** client is itself three delivery variants of the *same* page, run as separate matrix cells, to catch breakage specific to how the package is consumed:
 
-- `js-vite` — bundled by [vite](https://vite.dev/).
+- `js` — bundled by [vite](https://vite.dev/).
 - `js-esbuild` — bundled by [esbuild](https://esbuild.github.io/) (a different bundler).
 - `js-jsdelivr` — no bundler, no install: the page `import`s the packages straight from the [jsDelivr](https://www.jsdelivr.com/) ESM CDN (`https://cdn.jsdelivr.net/npm/@moq/watch/element/+esm`), which resolves the export map and bundles the dep graph.
 
@@ -77,7 +77,7 @@ just cloudflare
 # Moxygen's protocol interop client against the moq-dev relay (Linux Docker):
 just moxygen
 # ...or use the moq flake as the channel (builds moq, no install needed):
-just nix-channel --publishers rust,js-vite --subscribers rust,python,js-jsdelivr --timeout 30
+just nix-channel --publishers rust,js --subscribers rust,python,js-jsdelivr --timeout 30
 ```
 
 `PLAYWRIGHT_BROWSERS_PATH` is set by the flake, so the browser client uses the nix Chromium. The npm `playwright` in `clients/js/package.json` is pinned to match that Chromium build (enforced by `freshness.sh`); bumping nixpkgs means bumping that pin too.
@@ -91,8 +91,8 @@ cargo install moq-relay moq-cli       # installs moq-relay + moq (or brew / apt)
 # default matrix is rust-only:
 ./smoke.sh
 
-# full matrix (browser variants: js-vite, js-esbuild, js-jsdelivr):
-just full   # or: ./smoke.sh --publishers rust,python,js-vite --subscribers rust,js-jsdelivr ...
+# full matrix (browser variants: js, js-esbuild, js-jsdelivr):
+just full   # or: ./smoke.sh --publishers rust,python,js --subscribers rust,js-jsdelivr ...
 
 # point at a specific build instead of PATH:
 RELAY_BIN=/path/to/moq-relay MOQ_BIN=/path/to/moq ./smoke.sh
@@ -198,8 +198,8 @@ This test tracks the **latest published** packages, so it sometimes runs ahead o
 - **Docker channel** (`moqdev/moq-relay` + `moqdev/moq-cli`, Linux): working. The containerised relay routes the full matrix and the containerised `moq` publishes/subscribes end-to-end, validated against the published images.
 - **Python publish/subscribe**: working. `moq-rs` 0.2.16 shipped the streaming importer (`publish_media_stream`), so Python now publishes a raw Annex-B broadcast too, verified end-to-end against rust/swift/c subscribers.
 - **Swift / Kotlin / C subscribe**: working, verified end-to-end against the published 0.2.16 / 0.3.0 packages (`moq-dev/moq-swift`, `dev.moq:moq`, `libmoq`). Subscriber-only by choice.
-- **Native JS on bun** (`js-native-bun`): working. `@moq/net` + `@moq/hang` + moq's `@moq/web-transport` polyfill connect via WebTransport and read frames under Bun. (An earlier attempt with `@fails-components/webtransport` crashed Bun; moq's own polyfill is the one to use.)
-- **Native JS on node** (`js-native-node`): working. node briefly lagged bun here: `@moq/web-transport`'s `session.ts` did `import { NapiClient } from "../napi.js"` — a *named* import from a napi-rs CJS module whose exports node's ESM loader can't statically see, so node threw `does not provide an export named 'NapiClient'` while Bun's looser CJS interop accepted it. `@moq/web-transport` 0.1.2 shipped the predicted fix (default-import the now-`.cjs` binding, then destructure `NapiClient`), so this cell is green. Exactly the break-then-fix this repo exists to surface.
+- **Native JS on bun** (`js-bun`): working. `@moq/net` + `@moq/hang` + moq's `@moq/web-transport` polyfill connect via WebTransport and read frames under Bun. (An earlier attempt with `@fails-components/webtransport` crashed Bun; moq's own polyfill is the one to use.)
+- **Native JS on node** (`js-node`): working. node briefly lagged bun here: `@moq/web-transport`'s `session.ts` did `import { NapiClient } from "../napi.js"` — a *named* import from a napi-rs CJS module whose exports node's ESM loader can't statically see, so node threw `does not provide an export named 'NapiClient'` while Bun's looser CJS interop accepted it. `@moq/web-transport` 0.1.2 shipped the predicted fix (default-import the now-`.cjs` binding, then destructure `NapiClient`), so this cell is green. Exactly the break-then-fix this repo exists to surface.
 - **Go (any role)**: working. The `moq-dev/moq-go` module was un-buildable (stuck at v0.2.15, missing the generated `moq.h` header and the prebuilt static libs, so `go get` + build failed); v0.2.22 now ships `moq.h` plus `libmoq_ffi.a` for linux (amd64/arm64), darwin, and windows, and a `CGO_ENABLED=1 go build` against it links cleanly — verified in a linux/amd64 container, clearing the blocker that kept this cell red. One caveat the matrix doesn't see: building the Go client on **macOS** still fails to link, because the module's darwin cgo `LDFLAGS` omit `-framework CoreServices` (needed by the bundled Rust `notify` crate's FSEvents backend); CI only builds Go on Linux. Tracked upstream in moq-dev/moq's `go/moq/cgo.go`.
 - **GStreamer subscribe** (`gst`): working. `moq-gst` ships apt/brew/rpm/tarball + nix artifacts, so the cell resolves the newest tag and selects the matching platform tarball from that release's asset metadata. The published plugin load-checks green — `gst-inspect-1.0 moq` exposes `moqsrc`/`moqsink` against a system GStreamer — and `moqsrc` reads a rust-published H.264 broadcast end-to-end.
 - **Token interop** (`token.sh`): working on **cargo / apt / nix** plus the **`moqdev/moq-cli` Docker image** (Linux). The published `moq auth` (from crates.io / apt / nix / Docker Hub) and `@moq/auth` (npm, under both node and bun) cross-verify every token across `HS256`, `EdDSA`, `ES256`, and `RS256`, and each verifier rejects tampered tokens and the wrong key. The Docker cell (`rust-docker`) proves the image — built `FROM nixos/nix`, so it carries the libiconv the brew bottle used to leak — runs cleanly. Subscriber-only languages don't ship token tooling yet, so the matrix is rust (binary + Docker) + the two JS runtimes for now.
