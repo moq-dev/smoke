@@ -992,7 +992,14 @@ run_matrix() {
         fi
         echo "=== publisher: $pub  broadcast: $broadcast ==="
         if is_broken "$pub"; then
-            for sub in "${SUB_LIST[@]}"; do record "$pub" "$sub" FAIL "publisher client unavailable"; done
+            # Same filter as run_round: a client that does not belong on this
+            # URL stays omitted, not a failure invented by the broken publisher.
+            for sub in "${SUB_LIST[@]}"; do
+                if ! belongs "$sub"; then
+                    continue
+                fi
+                record "$pub" "$sub" FAIL "publisher client unavailable"
+            done
             continue
         fi
         start_publisher "$pub" "$broadcast"
