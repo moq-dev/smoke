@@ -123,9 +123,10 @@ jobs:
 
       # ── Rust binaries, per channel (left on PATH for smoke.sh) ──────────
       # Key the installed binaries on the newest published versions (from the
-      # crates.io sparse index) and the compiler. A hit makes `cargo install` a
-      # no-op; a new release or rustc misses and compiles for real, which is
-      # exactly when this channel has something new to prove.
+      # crates.io sparse index) and the compiler. An exact hit is already the
+      # latest install, so it skips `cargo install`; a new release or rustc
+      # misses and compiles for real, which is exactly when this channel has
+      # something new to prove.
       - name: Resolve latest crate versions (cargo)
         id: crates
         if: matrix.channel == 'cargo'
@@ -137,6 +138,7 @@ jobs:
           echo "key=cargo-bin-${RUNNER_OS}-moq-relay-$(latest moq-relay)-moq-cli-$(latest moq-cli)-$(rustc -V | tr -c 'a-zA-Z0-9.\n' -)" >> "$GITHUB_OUTPUT"
 
       - name: Cache installed moq binaries (cargo)
+        id: cargo-cache
         if: matrix.channel == 'cargo'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -148,7 +150,7 @@ jobs:
           key: ${{ steps.crates.outputs.key }}
 
       - name: Install moq Rust packages (cargo)
-        if: matrix.channel == 'cargo'
+        if: matrix.channel == 'cargo' && steps.cargo-cache.outputs.cache-hit != 'true'
         # Honor each published binary crate's Cargo.lock. Without --locked, the
         # cargo channel can select a newly broken transitive dependency even when
         # the crate was published and tested against a working resolution.

@@ -91,17 +91,22 @@ fi
 # Both relays and the local integrity client deliberately follow their
 # repositories' default branches. A rev/tag/branch would silently turn this
 # into a stale snapshot rather than a Git-head smoke test.
-# shellcheck disable=SC2016  # the grep checks for the literal variable reference in cloudflare.sh
+# shellcheck disable=SC2016  # the greps match literal variable references
+builds_head() {
+    # builds_head <script> <repo variable>: the script builds that repo through
+    # its build_git, whose shallow clone takes the default branch (no --branch).
+    grep -qF "build_git \"\$$2\"" "$1" &&
+        grep -qF 'git clone --quiet --depth 1 "$repo" "$dir"' "$1"
+}
 if grep -q 'git = "https://github.com/cloudflare/moq-rs"' clients/cloudflare/Cargo.toml &&
     ! grep -qE '(^|[,{[:space:]])(rev|tag|branch)[[:space:]]*=' clients/cloudflare/Cargo.toml &&
-    grep -q 'cargo install --quiet --locked --git "$CLOUDFLARE_MOQ_REPO"' cloudflare.sh; then
+    builds_head cloudflare.sh CLOUDFLARE_MOQ_REPO; then
     note ok "cloudflare/moq-rs -> unpinned Git default branch"
 else
     note FAIL "cloudflare/moq-rs is no longer resolved from the unpinned Git default branch"
     fail=1
 fi
-# shellcheck disable=SC2016  # the grep checks for the literal variable reference in cloudflare.sh
-if grep -q 'cargo install --quiet --locked --git "$MOQ_REPO"' cloudflare.sh; then
+if builds_head cloudflare.sh MOQ_REPO; then
     note ok "moq-dev/moq relay -> unpinned Git default branch"
 else
     note FAIL "moq-dev/moq relay is no longer resolved from the unpinned Git default branch"
@@ -119,7 +124,7 @@ else
     fail=1
 fi
 # shellcheck disable=SC2016  # the grep checks for the literal variable reference in moxygen.sh
-if grep -q 'cargo install --quiet --locked --git "$MOQ_REPO"' moxygen.sh; then
+if builds_head moxygen.sh MOQ_REPO; then
     note ok "moxygen lane moq-dev/moq relay -> unpinned Git default branch"
 else
     note FAIL "moxygen lane no longer resolves moq-dev/moq from the unpinned Git default branch"
