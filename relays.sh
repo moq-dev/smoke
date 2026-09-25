@@ -25,16 +25,18 @@ EXTRA_ENDPOINTS=(
 )
 ONLY=""
 JSON_OUT=""
+LOGS_OUT=""
 SMOKE_ARGS=()
 
 usage() {
     cat >&2 <<'USAGE'
-usage: relays.sh [--required KEYS] [--only KEYS] [--registry URL|FILE] [--json FILE] [smoke.sh flags...]
+usage: relays.sh [--required KEYS] [--only KEYS] [--registry URL|FILE] [--json FILE] [--logs DIR] [smoke.sh flags...]
 
   --required KEYS   comma-separated registry keys whose relays must pass (default: moq-dev-rs)
   --only KEYS       only test these registry keys (e.g. moq-rs-draft-18,moxygen)
   --registry SRC    implementations.json URL or path (default: moq-interop-runner main)
   --json FILE       also write the results as JSON (what report/index.html renders)
+  --logs DIR        keep every cell's subscriber + publisher log; the JSON links them
 
 Any other flag (--publishers, --subscribers, --timeout) is passed to smoke.sh.
 USAGE
@@ -43,7 +45,7 @@ USAGE
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --required | --only | --registry | --json)
+        --required | --only | --registry | --json | --logs)
             [[ $# -ge 2 && "$2" != -* ]] || usage
             case "$1" in
                 --required)
@@ -53,6 +55,7 @@ while [[ $# -gt 0 ]]; do
                 --only) ONLY="$2" ;;
                 --registry) REGISTRY="$2" ;;
                 --json) JSON_OUT="$2" ;;
+                --logs) LOGS_OUT="$2" ;;
             esac
             shift 2
             ;;
@@ -129,6 +132,7 @@ fi
 # smoke.sh's exit status covers optional relays too; the verdict comes from the
 # per-cell results instead.
 : >"$TMP/results.tsv"
+[[ -z "$LOGS_OUT" ]] || relay_args+=(--logs "$LOGS_OUT")
 "$SMOKE_DIR/smoke.sh" "${relay_args[@]}" --results "$TMP/results.tsv" ${SMOKE_ARGS[@]+"${SMOKE_ARGS[@]}"} || true
 
 if [[ ! -s "$TMP/results.tsv" ]]; then
@@ -138,8 +142,8 @@ fi
 
 # ── summary ─────────────────────────────────────────────────────────────────
 # results.json is the source of truth: one entry per endpoint (registry order),
-# one cell per publisher -> subscriber pair with its status and the wire version
-# each side negotiated. The markdown table below and report/index.html both
+# one cell per publisher -> subscriber pair with its status, the wire version
+# each side negotiated, why it failed, and its logs (paths under --logs). The markdown table below and report/index.html both
 # render it. An endpoint passes when its matrix completed (smoke.sh's DONE
 # marker), at least one cell passed, and none failed; so one cut short or never
 # reached (smoke.sh died mid-run) counts as failing.
@@ -168,7 +172,14 @@ jq -n --rawfile selected "$TMP/selected.tsv" --rawfile results "$TMP/results.tsv
                 required: any($req[]; . == $key),
                 ok: (any($done[]; . == $url) and any($mine[]; .[3] == "PASS") and all($mine[]; .[3] != "FAIL")),
                 versions: ([$mine[] | .[4], .[5]] | map(select(. != null and . != "")) | unique),
-                cells: ($mine | map({key: pair, value: {status: .[3], pub_version: (.[4] // ""), sub_version: (.[5] // "")}}) | from_entries)
+                cells: ($mine | map({key: pair, value: {
+                    status: .[3],
+                    pub_version: (.[4] // ""),
+                    sub_version: (.[5] // ""),
+                    reason: (.[6] // ""),
+                    sub_log: (.[7] // ""),
+                    pub_log: (.[8] // "")
+                }}) | from_entries)
             }]
     }' >"$TMP/results.json"
 [[ -n "$JSON_OUT" ]] && cp "$TMP/results.json" "$JSON_OUT"

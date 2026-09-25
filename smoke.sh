@@ -30,7 +30,8 @@ PORT="${SMOKE_PORT:-4443}"
 URL="http://127.0.0.1:${PORT}"
 NEGATIVE=0
 EXTERNAL_RELAYS=() # --relay URLs; empty means stand up the local moq-relay
-RESULTS=""         # --results FILE: append one TSV row per cell (relay pub sub status)
+RESULTS=""         # --results FILE: append one TSV row per cell (see record())
+LOGS=""            # --logs DIR: keep each cell's subscriber + publisher log (see record())
 
 # Binaries under test. Whatever channel installed them (cargo/brew/apt) just has
 # to leave them on PATH; override here to point at a specific build.
@@ -82,6 +83,11 @@ while [[ $# -gt 0 ]]; do
         --results)
             require_value "$@"
             RESULTS="$2"
+            shift 2
+            ;;
+        --logs)
+            require_value "$@"
+            LOGS="$2"
             shift 2
             ;;
         *)
@@ -489,13 +495,13 @@ if needs go; then
     fi
 fi
 
-# The browser client ships three delivery variants (js-vite, js-esbuild,
+# The browser client ships three delivery variants (js = vite, js-esbuild,
 # js-jsdelivr) that all drive the same <moq-publish>/<moq-watch> elements; they
 # differ only in how the published npm packages reach the page.
-if needs js-vite || needs js-esbuild || needs js-jsdelivr; then
+if needs js || needs js-esbuild || needs js-jsdelivr; then
     echo "installing browser clients (@moq/watch + @moq/publish from npm)..."
     if ! have bun; then
-        for v in js-vite js-esbuild js-jsdelivr; do mark_broken "$v" "bun not found"; done
+        for v in js js-esbuild js-jsdelivr; do mark_broken "$v" "bun not found"; done
     else
         js_base() {
             (cd "$CLIENTS/js" && bun install) || return 1
@@ -506,16 +512,16 @@ if needs js-vite || needs js-esbuild || needs js-jsdelivr; then
             # jsdelivr imports from the CDN at runtime, so it needs no build. The
             # bundler variants each build their own page; a build failure fails
             # only that variant.
-            if needs js-vite && ! (cd "$CLIENTS/js" && bunx vite build) >"$TMP/js-vite.log" 2>&1; then
-                mark_broken js-vite "vite build failed"
-                sed 's/^/        /' "$TMP/js-vite.log" >&2 || true
+            if needs js && ! (cd "$CLIENTS/js" && bunx vite build) >"$TMP/js.log" 2>&1; then
+                mark_broken js "vite build failed"
+                sed 's/^/        /' "$TMP/js.log" >&2 || true
             fi
             if needs js-esbuild && ! (cd "$CLIENTS/js" && bun build-esbuild.ts) >"$TMP/js-esbuild.log" 2>&1; then
                 mark_broken js-esbuild "esbuild build failed"
                 sed 's/^/        /' "$TMP/js-esbuild.log" >&2 || true
             fi
         else
-            for v in js-vite js-esbuild js-jsdelivr; do mark_broken "$v" "bun install / playwright failed"; done
+            for v in js js-esbuild js-jsdelivr; do mark_broken "$v" "bun install / playwright failed"; done
             sed 's/^/        /' "$TMP/js-base.log" >&2 || true
         fi
     fi
@@ -523,17 +529,17 @@ fi
 
 # Native (non-browser) JS: the published @moq/net + @moq/hang under a runtime
 # with no native WebTransport, using moq's own @moq/web-transport polyfill.
-# Run under bun (js-native-bun) and node (js-native-node).
-if needs js-native-bun || needs js-native-node; then
+# Run under bun (js-bun) and node (js-node).
+if needs js-bun || needs js-node; then
     echo "installing native-js client (@moq/net + @moq/hang + webtransport polyfill)..."
     if ! have bun; then
-        for v in js-native-bun js-native-node; do mark_broken "$v" "bun not found (needed to install)"; done
+        for v in js-bun js-node; do mark_broken "$v" "bun not found (needed to install)"; done
     elif (cd "$CLIENTS/js-native" && bun install) >"$TMP/js-native.log" 2>&1; then
-        if needs js-native-node && ! have node; then
-            mark_broken js-native-node "node not found"
+        if needs js-node && ! have node; then
+            mark_broken js-node "node not found"
         fi
     else
-        for v in js-native-bun js-native-node; do mark_broken "$v" "bun install failed"; done
+        for v in js-bun js-node; do mark_broken "$v" "bun install failed"; done
         sed 's/^/        /' "$TMP/js-native.log" >&2 || true
     fi
 fi
@@ -655,6 +661,14 @@ ffmpeg_h264() {
         -f h264 -
 }
 
+# The driver.ts --variant for a browser cell: plain `js` is the vite bundle.
+js_variant() {
+    case "$1" in
+        js) echo vite ;;
+        *) echo "${1#js-}" ;;
+    esac
+}
+
 # Sets global PUB_PID. Called in the current shell (no command substitution) so
 # $! refers to the backgrounded job and kill_tree can reap the whole pipeline.
 # Every publisher just consumes the same ffmpeg Annex-B stream on stdin; the
@@ -674,11 +688,11 @@ start_publisher() {
         go)
             (ffmpeg_h264 | "$GO_SMOKE" publish --url "$URL" --broadcast "$broadcast") >"$log" 2>&1 &
             ;;
-        js-vite | js-esbuild | js-jsdelivr)
+        js | js-esbuild | js-jsdelivr)
             # Headless Chromium encodes its own H.264 from a fake camera via
             # WebCodecs (lazily, once a subscriber creates demand). The variant
             # selects how the published packages reach the page.
-            (cd "$CLIENTS/js" && bun driver.ts publish --variant "${lang#js-}" \
+            (cd "$CLIENTS/js" && bun driver.ts publish --variant "$(js_variant "$lang")" \
                 --url "$URL" --broadcast "$broadcast") >"$log" 2>&1 &
             ;;
         *)
@@ -756,17 +770,17 @@ run_subscriber() {
                 2>/dev/null | head -c 1 | wc -c | tr -d ' ' || true)
             [[ "${n:-0}" -ge 1 ]]
             ;;
-        js-vite | js-esbuild | js-jsdelivr)
+        js | js-esbuild | js-jsdelivr)
             # Headless Chromium decodes via WebCodecs; exits 0 once a frame lands.
-            (cd "$CLIENTS/js" && bun driver.ts subscribe --variant "${lang#js-}" \
+            (cd "$CLIENTS/js" && bun driver.ts subscribe --variant "$(js_variant "$lang")" \
                 --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT")
             ;;
-        js-native-bun)
+        js-bun)
             # Native @moq/net via the WebTransport polyfill, under bun.
             (cd "$CLIENTS/js-native" && bun subscribe.ts subscribe \
                 --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT")
             ;;
-        js-native-node)
+        js-node)
             # Same, under node (tsx runs the TS directly).
             (cd "$CLIENTS/js-native" && node --import tsx subscribe.ts subscribe \
                 --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT")
@@ -783,7 +797,7 @@ overall=0
 
 negotiated() {
     # negotiated <log>: the wire version a client reported, or nothing. The Rust
-    # clients log `connected version=moq-transport-18`; the browser page logs the
+    # and native-JS clients log `connected version=moq-transport-18`; the browser page logs the
     # WebTransport subprotocol it was handed (see clients/js/jsdelivr/setup.js),
     # whose `moqt-16` ALPN spelling is normalized to match.
     [[ -f "$1" ]] || return 0
@@ -792,19 +806,53 @@ negotiated() {
         sed -E 's/.*(=|: )//; s/^moqt-/moq-transport-/' || true
 }
 
+failure_reason() {
+    # failure_reason <log>: the first error-looking line of a cell log, minus its
+    # timestamp/level/target prefix and the browser's [page] tag. The first error is
+    # usually the cause; later ones tend to be the teardown it triggered.
+    [[ -f "$1" ]] || return 0
+    sed 's/\x1b\[[0-9;]*m//g' "$1" |
+        grep -m1 -E '(^|[^a-z])(err|error|Error|ERROR|failed|Failed|timed out)([^a-z]|$)' |
+        sed -E 's/^[0-9T:.-]+Z +[A-Z]+ +[a-z0-9_:]+: //; s/^\[page\] //; s/^[[:space:]]+//' |
+        tr '\t' ' ' | cut -c1-240 || true
+}
+
+log_dir() {
+    # log_dir: where --logs keeps the current relay's cell logs, relative to $LOGS.
+    sed -E 's#[^A-Za-z0-9._-]+#_#g; s#_+$##' <<<"$URL"
+}
+
 record() {
     # record <pub> <sub> <PASS|FAIL|SKIP> [note]: print the cell and, with
-    # --results, append a TSV row (relay, pub, sub, status, pub version, sub
-    # version) keyed by the relay URL; relays.sh summarises these.
+    # --results, append a TSV row keyed by the relay URL: relay, pub, sub, status,
+    # pub version, sub version, reason (why it failed or was skipped), and the
+    # subscriber / publisher log paths under --logs. relays.sh summarises these.
     local pub="$1" sub="$2" status="$3" note="${4:-}" pub_ver="" sub_ver=""
+    local reason="$note" sub_log="" pub_log="" dir
     if [[ "$status" != SKIP ]]; then
         pub_ver=$(negotiated "$TMP/pub-$pub.log")
         sub_ver=$(negotiated "$TMP/$pub-$sub.log")
     fi
+    if [[ "$status" == FAIL && -z "$reason" ]]; then
+        reason=$(failure_reason "$TMP/$pub-$sub.log")
+        [[ -n "$reason" ]] || reason=$(failure_reason "$TMP/pub-$pub.log" | sed 's/^/publisher: /')
+        [[ -n "$reason" ]] || reason="no data within ${TIMEOUT}s"
+    fi
+    # The publisher log is copied once its round ends (see run_round).
+    if [[ -n "$LOGS" && -z "$note" && "$status" != SKIP ]]; then
+        dir=$(log_dir)
+        mkdir -p "$LOGS/$dir"
+        if [[ -f "$TMP/$pub-$sub.log" ]]; then
+            sub_log="$dir/$pub-$sub.log"
+            cp "$TMP/$pub-$sub.log" "$LOGS/$sub_log"
+        fi
+        [[ "$pub" == none ]] || pub_log="$dir/pub-$pub.log"
+    fi
     echo "  $status  $pub -> $sub${note:+ ($note)}${sub_ver:+ [$sub_ver]}"
     [[ "$status" == FAIL ]] && overall=1
     if [[ -n "$RESULTS" ]]; then
-        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$URL" "$pub" "$sub" "$status" "$pub_ver" "$sub_ver" >>"$RESULTS"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$URL" "$pub" "$sub" "$status" \
+            "$pub_ver" "$sub_ver" "$reason" "$sub_log" "$pub_log" >>"$RESULTS"
     fi
     return 0
 }
@@ -814,7 +862,7 @@ reaches() {
     # WebTransport (a browser, or the polyfill), so a raw-QUIC moqt:// endpoint
     # is out of reach for them; that's a SKIP, not an interop failure.
     case "$1" in
-        js-*) [[ "$URL" != moqt://* ]] ;;
+        js | js-*) [[ "$URL" != moqt://* ]] ;;
         *) return 0 ;;
     esac
 }
@@ -861,6 +909,10 @@ run_round() {
     if [[ -n "$pub_pid" ]]; then
         kill_tree "$pub_pid"
         wait "$pub_pid" 2>/dev/null || true
+        if [[ -n "$LOGS" && -f "$TMP/pub-$pub.log" ]]; then
+            mkdir -p "$LOGS/$(log_dir)"
+            cp "$TMP/pub-$pub.log" "$LOGS/$(log_dir)/pub-$pub.log"
+        fi
         # Don't let cleanup() later signal this now-reaped (possibly recycled) PID.
         [[ "${PUB_PID:-}" == "$pub_pid" ]] && PUB_PID=""
     fi

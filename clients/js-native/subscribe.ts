@@ -53,6 +53,8 @@ async function run(): Promise<void> {
 	const origin = new Moq.Origin.Producer();
 	const connection = await Moq.Connection.connect({ url: new URL(url as string), consume: origin, signal: abort.signal });
 	activeConnection = connection;
+	// Same shape as the Rust clients' log line, so the harness records the version.
+	console.error(`connected version=${connection.version}`);
 
 	// Wait for the broadcast to be announced before subscribing. Subscribing to a
 	// track on a broadcast the publisher hasn't announced yet races the relay,
@@ -85,14 +87,21 @@ async function run(): Promise<void> {
 		for (;;) {
 			const group = await video.recvGroup();
 			if (!group) break;
-			for (;;) {
-				const frame = await group.readFrame();
-				if (!frame) break;
-				total += frame.payload.byteLength;
-				if (total > 0) {
-					console.error(`received ${total} bytes from ${broadcast}`);
-					return;
+			try {
+				for (;;) {
+					const frame = await group.readFrame();
+					if (!frame) break;
+					total += frame.payload.byteLength;
+					if (total > 0) {
+						console.error(`received ${total} bytes from ${broadcast}`);
+						return;
+					}
 				}
+			} catch (err) {
+				// A relay may reset a group stream it has given up on (e.g. a stale
+				// group once a newer one starts). Players skip to the next group, so
+				// do the same; the track itself failing still ends in recvGroup().
+				console.error(`group reset, waiting for the next: ${err instanceof Error ? err.message : String(err)}`);
 			}
 		}
 		throw new Error("no frame data received");
