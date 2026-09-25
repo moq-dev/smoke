@@ -244,12 +244,12 @@ jobs:
       # Publishers: rust, python, and the three browser variants publish today;
       # go/swift/kotlin/c/gst subscribe only (go builds on Linux against the
       # published moq-go module; gst resolves the latest moq-gst-v* release).
-      # Browser variants: js, js-esbuild (bundlers), js-jsdelivr (CDN).
+      # Browser variants: js-web, js-esbuild (bundlers), js-jsdelivr (CDN).
       # Swift needs the Xcode toolchain, so it's a macOS-only subscriber.
       # --timeout 30 gives headless Chromium cold-start headroom.
       - name: Smoke
         run: |
-          browser="js,js-esbuild,js-jsdelivr"
+          browser="js-web,js-esbuild,js-jsdelivr"
           # Both run moq's @moq/web-transport polyfill. node briefly failed on the
           # polyfill's napi CJS named-import; fixed in @moq/web-transport 0.1.2.
           native="js-node,js-bun"
@@ -331,13 +331,11 @@ jobs:
 
       # The relay list comes live from the moq-interop-runner registry. Only
       # moq-dev's own relay gates the job; every other endpoint lands in the job
-      # summary table as optional. Rust (moq-native) and the browser (@moq/net)
-      # are the two independent client stacks, so both publish and subscribe.
-      # js-bun adds a third QUIC stack (@moq/net over the quinn-based
-      # @moq/web-transport polyfill); it only subscribes, and only over
-      # WebTransport, since the polyfill has no raw-QUIC (moqt://) mode.
+      # summary table as optional. Rust publishes and subscribes on every transport.
+      # js-web is the browser and runs only on WebTransport. js-bun subscribes
+      # only on raw QUIC (moqt://). Neither is listed on the other column.
       - name: External relay interop
-        run: ./relays.sh --publishers rust,js --subscribers rust,js,js-bun --timeout 30 --json results.json --logs logs
+        run: ./relays.sh --publishers rust,js-web --subscribers rust,js-web,js-bun --timeout 30 --json results.json --logs logs
 
       # The HTML report (report/index.html) on GitHub Pages. Built even when a
       # required relay failed, since that's exactly the run worth looking at.

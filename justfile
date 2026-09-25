@@ -6,8 +6,8 @@
 # registries on each run; you bring moq-relay + moq on PATH (cargo/brew/apt).
 
 # Run the smoke matrix (default: rust only). Pass flags through, e.g.
-#   just smoke --publishers rust,python,js --subscribers rust,python,js-jsdelivr
-# Browser variants: js, js-esbuild, js-jsdelivr (vite/esbuild bundlers, jsDelivr CDN).
+#   just smoke --publishers rust,python,js-web --subscribers rust,python,js-jsdelivr
+# Browser variants: js-web, js-esbuild, js-jsdelivr (vite/esbuild bundlers, jsDelivr CDN).
 default *args:
     ./smoke.sh {{ args }}
 
@@ -18,7 +18,7 @@ smoke *args:
 # Full cross-language matrix with browser cold-start headroom. Rust + browser
 # publish; everyone subscribes (swift needs the macOS Xcode toolchain).
 full:
-    ./smoke.sh --publishers rust,python,js,js-esbuild,js-jsdelivr --subscribers rust,python,go,swift,kotlin,c,c-pkgconfig,c-cmake,gst,js,js-esbuild,js-jsdelivr,js-node,js-bun --timeout 30
+    ./smoke.sh --publishers rust,python,js-web,js-esbuild,js-jsdelivr --subscribers rust,python,go,swift,kotlin,c,c-pkgconfig,c-cmake,gst,js-web,js-esbuild,js-jsdelivr,js-node,js-bun --timeout 30
 
 # Build both Rust implementations from their latest default branches. Drive
 # both relays with the Cloudflare client over WebTransport and raw QUIC.
@@ -34,7 +34,7 @@ moxygen:
 # registry (Cloudflare, moxygen, imquic, ...). Only moq-dev's relay is required;
 # the rest are reported in a summary table. WebSocket is a separate column for
 # the relays named in relays.sh WEBSOCKET_KEYS. Pass flags through, e.g.
-#   just relays --only moq-rs-draft-18 --publishers rust,js --subscribers rust,js
+#   just relays --only moq-rs-draft-18 --publishers rust,js-web --subscribers rust,js-web,js-bun
 relays *args:
     ./relays.sh {{ args }}
 

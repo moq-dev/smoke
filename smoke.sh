@@ -18,6 +18,9 @@
 # public relays in the moq-interop-runner registry. An external http(s) or moqt
 # URL is that transport alone: the WebSocket fallback stays off. A ws(s) URL is
 # the WebSocket column, which relays.sh only adds for relays that opted in.
+# On those external URLs the browser (js-web) runs only for WebTransport and bun
+# (js-bun) only for raw QUIC. A client that does not belong is left out of the
+# results, not recorded as a skip.
 set -euo pipefail
 
 SMOKE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -529,13 +532,13 @@ if needs go; then
     fi
 fi
 
-# The browser client ships three delivery variants (js = vite, js-esbuild,
+# The browser client ships three delivery variants (js-web = vite, js-esbuild,
 # js-jsdelivr) that all drive the same <moq-publish>/<moq-watch> elements; they
 # differ only in how the published npm packages reach the page.
-if needs js || needs js-esbuild || needs js-jsdelivr; then
+if needs js-web || needs js-esbuild || needs js-jsdelivr; then
     echo "installing browser clients (@moq/watch + @moq/publish from npm)..."
     if ! have bun; then
-        for v in js js-esbuild js-jsdelivr; do mark_broken "$v" "bun not found"; done
+        for v in js-web js-esbuild js-jsdelivr; do mark_broken "$v" "bun not found"; done
     else
         js_base() {
             (cd "$CLIENTS/js" && bun install) || return 1
@@ -546,8 +549,8 @@ if needs js || needs js-esbuild || needs js-jsdelivr; then
             # jsdelivr imports from the CDN at runtime, so it needs no build. The
             # bundler variants each build their own page; a build failure fails
             # only that variant.
-            if needs js && ! (cd "$CLIENTS/js" && bunx vite build) >"$TMP/js.log" 2>&1; then
-                mark_broken js "vite build failed"
+            if needs js-web && ! (cd "$CLIENTS/js" && bunx vite build) >"$TMP/js.log" 2>&1; then
+                mark_broken js-web "vite build failed"
                 sed 's/^/        /' "$TMP/js.log" >&2 || true
             fi
             if needs js-esbuild && ! (cd "$CLIENTS/js" && bun build-esbuild.ts) >"$TMP/js-esbuild.log" 2>&1; then
@@ -555,7 +558,7 @@ if needs js || needs js-esbuild || needs js-jsdelivr; then
                 sed 's/^/        /' "$TMP/js-esbuild.log" >&2 || true
             fi
         else
-            for v in js js-esbuild js-jsdelivr; do mark_broken "$v" "bun install / playwright failed"; done
+            for v in js-web js-esbuild js-jsdelivr; do mark_broken "$v" "bun install / playwright failed"; done
             sed 's/^/        /' "$TMP/js-base.log" >&2 || true
         fi
     fi
@@ -695,11 +698,16 @@ ffmpeg_h264() {
         -f h264 -
 }
 
-# The driver.ts --variant for a browser cell: plain `js` is the vite bundle.
+# The driver.ts --variant for a browser cell. js-web is the vite bundle.
 js_variant() {
     case "$1" in
-        js) echo vite ;;
-        *) echo "${1#js-}" ;;
+        js-web) echo vite ;;
+        js-esbuild) echo esbuild ;;
+        js-jsdelivr) echo jsdelivr ;;
+        *)
+            echo "unknown browser variant: $1" >&2
+            return 1
+            ;;
     esac
 }
 
@@ -722,7 +730,7 @@ start_publisher() {
         go)
             (ffmpeg_h264 | run_client "$GO_SMOKE" publish --url "$URL" --broadcast "$broadcast") >"$log" 2>&1 &
             ;;
-        js | js-esbuild | js-jsdelivr)
+        js-web | js-esbuild | js-jsdelivr)
             # Headless Chromium encodes its own H.264 from a fake camera via
             # WebCodecs (lazily, once a subscriber creates demand). The variant
             # selects how the published packages reach the page.
@@ -810,7 +818,7 @@ run_subscriber() {
                 2>/dev/null | head -c 1 | wc -c | tr -d ' ' || true)
             [[ "${n:-0}" -ge 1 ]]
             ;;
-        js | js-esbuild | js-jsdelivr)
+        js-web | js-esbuild | js-jsdelivr)
             # Headless Chromium decodes via WebCodecs; exits 0 once a frame lands.
             (cd "$CLIENTS/js" && run_client bun driver.ts subscribe --variant "$(js_variant "$lang")" \
                 --url "$URL" --broadcast "$broadcast" --timeout "$TIMEOUT")
@@ -897,12 +905,20 @@ record() {
     return 0
 }
 
-reaches() {
-    # reaches <lang>: can this client dial $URL at all? The JS clients speak
-    # WebTransport (a browser, or the polyfill), so a raw-QUIC moqt:// endpoint
-    # is out of reach for them; that's a SKIP, not an interop failure.
+belongs() {
+    # belongs <lang>: this client is part of the matrix for $URL.
+    # The local relay runs whoever was requested. External relays split JS by
+    # transport: the browser is WebTransport (http/https) only, and bun is raw
+    # QUIC (moqt://) only. Anything else is left out, not recorded as a skip.
+    # The browser will never speak native QUIC, so it does not appear there.
+    [[ ${#EXTERNAL_RELAYS[@]} -eq 0 ]] && return 0
     case "$1" in
-        js | js-*) [[ "$URL" != moqt://* ]] ;;
+        js-web | js-esbuild | js-jsdelivr | js-node)
+            [[ "$URL" == http://* || "$URL" == https://* ]]
+            ;;
+        js-bun)
+            [[ "$URL" == moqt://* ]]
+            ;;
         *) return 0 ;;
     esac
 }
@@ -913,10 +929,11 @@ run_round() {
     # without running it; either way cells are reported in --subscribers order.
     local pids=() names=() i sub
     for sub in "${SUB_LIST[@]}"; do
+        if ! belongs "$sub"; then
+            continue
+        fi
         names+=("$sub")
-        if ! reaches "$sub"; then
-            pids+=("SKIP:subscriber can't dial $URL")
-        elif is_broken "$sub"; then
+        if is_broken "$sub"; then
             pids+=("FAIL:subscriber client unavailable")
         else
             (run_subscriber "$sub" "$broadcast") >"$TMP/$pub-$sub.log" 2>&1 &
@@ -970,11 +987,10 @@ run_matrix() {
     fi
     for pub in "${PUB_LIST[@]}"; do
         broadcast="smoke-${pub}-$$-${RANDOM}.hang"
-        echo "=== publisher: $pub  broadcast: $broadcast ==="
-        if ! reaches "$pub"; then
-            for sub in "${SUB_LIST[@]}"; do record "$pub" "$sub" SKIP "publisher can't dial $URL"; done
+        if ! belongs "$pub"; then
             continue
         fi
+        echo "=== publisher: $pub  broadcast: $broadcast ==="
         if is_broken "$pub"; then
             for sub in "${SUB_LIST[@]}"; do record "$pub" "$sub" FAIL "publisher client unavailable"; done
             continue
