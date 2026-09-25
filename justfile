@@ -15,10 +15,10 @@ default *args:
 smoke *args:
     ./smoke.sh {{ args }}
 
-# Full cross-language matrix with browser cold-start headroom. Rust + browser
-# publish; everyone subscribes (swift needs the macOS Xcode toolchain).
+# Full cross-language matrix with browser cold-start headroom. Rust, Python, Go,
+# and the browser publish; everyone subscribes (swift needs the macOS Xcode toolchain).
 full:
-    ./smoke.sh --publishers rust,python,js-web,js-esbuild,js-jsdelivr --subscribers rust,python,go,swift,kotlin,c,c-pkgconfig,c-cmake,gst,js-web,js-esbuild,js-jsdelivr,js-node,js-bun --timeout 30
+    ./smoke.sh --publishers rust,python,go,js-web,js-esbuild,js-jsdelivr --subscribers rust,python,go,swift,kotlin,c,c-pkgconfig,c-cmake,gst,js-web,js-esbuild,js-jsdelivr,js-node,js-bun --timeout 30
 
 # Build both Rust implementations from their latest default branches. Drive
 # both relays with the Cloudflare client over WebTransport and raw QUIC.

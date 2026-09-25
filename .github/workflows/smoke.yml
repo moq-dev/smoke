@@ -241,9 +241,9 @@ jobs:
         run: ./freshness.sh
 
       # ── run the full interop matrix ────────────────────────────────────
-      # Publishers: rust, python, and the three browser variants publish today;
-      # go/swift/kotlin/c/gst subscribe only (go builds on Linux against the
-      # published moq-go module; gst resolves the latest moq-gst-v* release).
+      # Publishers: rust, python, go, and the three browser variants publish today;
+      # swift/kotlin/c/gst subscribe only. Go builds on Linux against the
+      # published moq-go module; gst resolves the latest moq-gst-v* release.
       # Browser variants: js-web, js-esbuild (bundlers), js-jsdelivr (CDN).
       # Swift needs the Xcode toolchain, so it's a macOS-only subscriber.
       # --timeout 30 gives headless Chromium cold-start headroom.
@@ -258,7 +258,7 @@ jobs:
           subs="rust,python,go,kotlin,c,c-pkgconfig,c-cmake,gst,$browser,$native"
           if [ "$RUNNER_OS" = "macOS" ]; then subs="$subs,swift"; fi
           ./smoke.sh \
-            --publishers "rust,python,$browser" \
+            --publishers "rust,python,go,$browser" \
             --subscribers "$subs" \
             --timeout 30
 
