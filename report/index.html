@@ -264,9 +264,16 @@ function tally(cells) {
 	const ran = cells.filter((c) => c.status !== "SKIP");
 	return { passed: ran.filter((c) => c.status === "PASS").length, total: ran.length };
 }
-const grade = ({ passed, total }) => (total === 0 ? "none" : passed === total ? "ok" : passed === 0 ? "bad" : "partial");
+// `complete` is relays.sh's `ok` for the endpoints that ran: a matrix cut short
+// (smoke.sh died before its DONE marker) is never all-green, whatever it recorded.
+function grade({ passed, total }, complete = true) {
+	if (total === 0) return "none";
+	if (passed === 0) return "bad";
+	return passed === total && complete ? "ok" : "partial";
+}
 const sum = (ts) => ts.reduce((a, t) => ({ passed: a.passed + t.passed, total: a.total + t.total }), { passed: 0, total: 0 });
 const endpointTally = (e) => tally(Object.values(e.cells));
+const complete = (es) => es.every((e) => e.ok || endpointTally(e).total === 0);
 
 // One row per implementation: the registry lists WebTransport and raw QUIC as
 // separate endpoints of the same relay.
@@ -305,12 +312,12 @@ function renderLatest(r) {
 			const scores = g.endpoints.filter((e) => e.transport === t).map((e) => {
 				const s = endpointTally(e);
 				if (s.total === 0) return `<span class="muted">–</span>`;
-				return `<button class="score ${grade(s)}" data-url="${esc(e.url)}" aria-label="${esc(`${e.transport} ${s.passed} of ${s.total} passing; show logs`)}">${s.passed}/${s.total}</button>`;
+				return `<button class="score ${grade(s, e.ok)}" data-url="${esc(e.url)}" aria-label="${esc(`${e.transport} ${s.passed} of ${s.total} passing; show logs`)}">${s.passed}/${s.total}</button>`;
 			});
 			return `<td class="score-col">${scores.length ? scores.join("") : `<span class="muted">—</span>`}</td>`;
 		}).join("");
 		const tag = g.required ? `<span class="tag required">required</span>` : "";
-		return `<tr class="${grade(sum(g.endpoints.map(endpointTally)))}">
+		return `<tr class="${grade(sum(g.endpoints.map(endpointTally)), complete(g.endpoints))}">
 			<td><span class="name">${esc(g.name)}</span>${tag}<br><span class="host">${hosts.map(esc).join(", ")}</span></td>
 			<td class="ver ver-col">${versions.length ? versions.map(esc).join("<br>") : `<span class="muted">—</span>`}</td>
 			${cols}</tr>`;
@@ -441,7 +448,7 @@ function renderHistory(r, history) {
 			// Older history entries only record pass/fail per endpoint; count those as 1/1 or 0/1.
 			const seen = g.endpoints.map((e) => run.endpoints[e.url]).filter(Boolean);
 			const t = sum(seen.map((h) => (h.total != null ? { passed: h.passed, total: h.total } : { passed: h.ok ? 1 : 0, total: 1 })));
-			const cls = seen.length ? grade(t) : "none";
+			const cls = seen.length ? grade(t, seen.every((h) => h.ok || h.total === 0)) : "none";
 			const versions = [...new Set(seen.flatMap((h) => h.versions ?? []))];
 			const tip = `${when(run.generated)}: ${seen.length ? `${t.passed}/${t.total} passing` : "not tested"}${versions.length ? ` (${versions.join(", ")})` : ""}`;
 			const dot = `<span class="dot ${cls}" title="${esc(tip)}"></span>`;
