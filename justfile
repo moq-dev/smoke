@@ -30,6 +30,11 @@ cloudflare:
 moxygen:
     ./moxygen.sh
 
+# Score the moq CLI's moq-lite-06 publisher against the draft with
+# moq-contribution-interop-runner, built from its latest default branch.
+conformance:
+    ./conformance.sh
+
 # Publish/subscribe through every public relay in the moq-interop-runner
 # registry (Cloudflare, moxygen, imquic, ...). Only moq-dev's relay is required;
 # the rest are reported in a summary table. WebSocket is a separate column for
