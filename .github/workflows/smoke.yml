@@ -450,8 +450,11 @@ jobs:
           dirname "$shim" >> "$GITHUB_PATH"
 
       - name: Moxygen interoperability
-        # Current moq-dev HEAD negotiates successfully but fails moxygen's
-        # announce-subscribe case. Keep the full diagnostic visible without
-        # failing the job; remove this once that protocol mismatch is fixed.
+        # moxygen's client subscribes with its unregistered LargestGroup filter
+        # type (0xFA), which draft-16 requires the relay to refuse by closing the
+        # session, so announce-subscribe fails. subscribe-error and
+        # subscribe-before-announce pass only because they accept that close.
+        # Remove this once moxygen sends a registered filter type
+        # (moq-dev/moq quest/m1/smoke-moxygen.md).
         continue-on-error: true
         run: ./moxygen.sh
