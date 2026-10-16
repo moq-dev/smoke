@@ -127,8 +127,11 @@ try {
 		if (artifactDir) {
 			if (code === 0) await context.tracing.stop();
 			else {
-				await diagnostics.write(artifactDir, artifactName, error);
-				await context.tracing.stop({ path: join(artifactDir, `${artifactName}.zip`) });
+				// Save both artifacts even if one fails, and keep the run error as the cause.
+				await diagnostics.write(artifactDir, artifactName, error).catch((e) => console.error("diagnostics write failed:", e));
+				await context.tracing
+					.stop({ path: join(artifactDir, `${artifactName}.zip`) })
+					.catch((e) => console.error("trace save failed:", e));
 			}
 		}
 	}

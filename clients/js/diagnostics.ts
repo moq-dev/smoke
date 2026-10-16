@@ -44,9 +44,10 @@ export class Diagnostics {
 		this.#data = { role, variant, pageUrl, requests: [], console: [], pageErrors: [] };
 		page.on("request", (request) => this.#request(request));
 		page.on("response", (response) => this.#response(response));
+		page.on("requestfinished", (request) => this.#body(request));
 		page.on("requestfailed", (request) => {
-			const exchange = this.#exchange(request);
-			exchange.failure = request.failure()?.errorText ?? "unknown request failure";
+			this.#exchange(request).failure = request.failure()?.errorText ?? "unknown request failure";
+			this.#body(request);
 		});
 		page.on("console", (message) => this.console(message));
 		page.on("pageerror", (error) => this.#data.pageErrors.push(error.stack ?? error.message));
@@ -59,13 +60,19 @@ export class Diagnostics {
 	async write(dir: string, name: string, error?: unknown): Promise<string> {
 		this.#data.error = error instanceof Error ? (error.stack ?? error.message) : error === undefined ? undefined : String(error);
 		await Promise.allSettled(this.#pending);
+		for (const exchange of this.#data.requests) {
+			const response = exchange.response;
+			if (exchange.url.startsWith(CDN) && response && response.body === undefined && response.bodyError === undefined) {
+				response.bodyError = "body incomplete when the cell ended";
+			}
+		}
 		await mkdir(dir, { recursive: true });
 		const path = join(dir, `${name}.json`);
 		await Bun.write(path, `${JSON.stringify(this.#data, undefined, 2)}\n`);
 		return path;
 	}
 
-	#request(request: Request): void {
+	#request(request: Request): Exchange {
 		const exchange: Exchange = {
 			method: request.method(),
 			url: request.url(),
@@ -74,32 +81,36 @@ export class Diagnostics {
 		};
 		this.#requests.set(request, exchange);
 		this.#data.requests.push(exchange);
+		return exchange;
 	}
 
 	#response(response: Response): void {
-		const exchange = this.#exchange(response.request());
-		exchange.response = {
+		this.#exchange(response.request()).response = {
 			status: response.status(),
 			statusText: response.statusText(),
 			headers: response.headers(),
 		};
-		if (!response.url().startsWith(CDN)) return;
+	}
+
+	// Read only after the request ends, so a stalled CDN body cannot hang write().
+	#body(request: Request): void {
+		const exchange = this.#exchange(request);
+		if (!exchange.url.startsWith(CDN)) return;
 		this.#pending.push(
-			response.body().then(
-				(body) => Object.assign(exchange.response ?? {}, responseBody(body)),
-				(error) => {
-					if (exchange.response) exchange.response.bodyError = error instanceof Error ? error.message : String(error);
-				},
-			),
+			(async () => {
+				const meta = exchange.response;
+				if (!meta) return;
+				try {
+					const response = await request.response();
+					if (response) Object.assign(meta, responseBody(await response.body()));
+				} catch (error) {
+					meta.bodyError = error instanceof Error ? error.message : String(error);
+				}
+			})(),
 		);
 	}
 
 	#exchange(request: Request): Exchange {
-		let exchange = this.#requests.get(request);
-		if (exchange) return exchange;
-		this.#request(request);
-		exchange = this.#requests.get(request);
-		if (!exchange) throw new Error("request was not recorded");
-		return exchange;
+		return this.#requests.get(request) ?? this.#request(request);
 	}
 }
