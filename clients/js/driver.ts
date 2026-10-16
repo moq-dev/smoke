@@ -90,12 +90,25 @@ try {
 	}
 	page.on("console", (m) => console.error(`[page] ${m.text()}`));
 	page.on("pageerror", (e) => console.error(`[page error] ${e.message}`));
+	// smoke.sh SIGKILLs a publisher, which skips the artifact writes below, so a
+	// publisher whose scripts fail to load exits here instead of streaming nothing.
+	const scriptFailed = new Promise<never>((_, reject) => {
+		page.on("requestfailed", (r) => {
+			if (r.resourceType() === "script") reject(new Error(`script failed: ${r.url()}: ${r.failure()?.errorText}`));
+		});
+		page.on("response", (r) => {
+			if (r.request().resourceType() === "script" && r.status() >= 400) {
+				reject(new Error(`script failed: ${r.url()}: HTTP ${r.status()}`));
+			}
+		});
+	});
+	scriptFailed.catch(() => {}); // only the publisher awaits it
 	try {
 		await page.goto(pageUrl, { waitUntil: "load" });
 
 		if (role === "publish") {
 			console.error(`publishing ${broadcast} (fake camera, ${variant}) to ${url}`);
-			await new Promise(() => {}); // stream until the orchestrator kills us
+			await scriptFailed; // otherwise stream until the orchestrator kills us
 		} else {
 			const start = Date.now();
 			const deadline = start + timeoutMs;
