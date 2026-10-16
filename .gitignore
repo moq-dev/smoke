@@ -3,6 +3,7 @@
 clients/js/node_modules/
 clients/js/dist-vite/
 clients/js/dist-esbuild/
+clients/js/artifacts/
 clients/js-native/node_modules/
 clients/token/js/node_modules/
 clients/go/bin/
