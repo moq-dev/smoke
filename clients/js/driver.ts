@@ -13,6 +13,7 @@
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { chromium } from "playwright";
+import { Diagnostics } from "./diagnostics";
 
 const { positionals, values } = parseArgs({
 	allowPositionals: true,
@@ -67,8 +68,14 @@ const browser = await chromium.launch({
 });
 
 let code = 1;
+let error: unknown;
 try {
-	const page = await browser.newPage();
+	const context = await browser.newContext();
+	const page = await context.newPage();
+	const diagnostics = new Diagnostics(page, role, variant, pageUrl);
+	const artifactDir = process.env.SMOKE_BROWSER_ARTIFACTS;
+	const artifactName = [role, variant, broadcast].join("-").replaceAll(/[^A-Za-z0-9._-]/g, "_");
+	if (artifactDir) await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
 	// The published elements race a WebSocket fallback and expose no switch for it.
 	// smoke.sh sets this on external relays that are not the WebSocket column, so
 	// the page cannot open one. A ws(s) URL leaves the constructor alone.
@@ -83,38 +90,51 @@ try {
 	}
 	page.on("console", (m) => console.error(`[page] ${m.text()}`));
 	page.on("pageerror", (e) => console.error(`[page error] ${e.message}`));
-	await page.goto(pageUrl, { waitUntil: "load" });
+	try {
+		await page.goto(pageUrl, { waitUntil: "load" });
 
-	if (role === "publish") {
-		console.error(`publishing ${broadcast} (fake camera, ${variant}) to ${url}`);
-		await new Promise(() => {}); // stream until the orchestrator kills us
-	} else {
-		const start = Date.now();
-		const deadline = start + timeoutMs;
-		let frames = 0;
-		let reloaded = false;
-		while (Date.now() < deadline) {
-			frames = await page.evaluate(() => {
-				const w = document.querySelector("moq-watch") as unknown as {
-					video?: { out?: { stats?: { peek(): { frameCount?: number } | undefined } } };
-				} | null;
-				return w?.video?.out?.stats?.peek()?.frameCount ?? 0;
-			});
-			if (frames > 0) break;
-			// The watch element gives up if it subscribes to the catalog before the
-			// publisher has announced it (RESET_STREAM). If nothing has decoded by the
-			// halfway mark, reload once to re-subscribe now that the publisher is up.
-			if (!reloaded && Date.now() - start > timeoutMs / 2) {
-				reloaded = true;
-				await page.reload({ waitUntil: "load" }).catch(() => {});
+		if (role === "publish") {
+			console.error(`publishing ${broadcast} (fake camera, ${variant}) to ${url}`);
+			await new Promise(() => {}); // stream until the orchestrator kills us
+		} else {
+			const start = Date.now();
+			const deadline = start + timeoutMs;
+			let frames = 0;
+			let reloaded = false;
+			while (Date.now() < deadline) {
+				frames = await page.evaluate(() => {
+					const w = document.querySelector("moq-watch") as unknown as {
+						video?: { out?: { stats?: { peek(): { frameCount?: number } | undefined } } };
+					} | null;
+					return w?.video?.out?.stats?.peek()?.frameCount ?? 0;
+				});
+				if (frames > 0) break;
+				// The watch element gives up if it subscribes to the catalog before the
+				// publisher has announced it (RESET_STREAM). If nothing has decoded by the
+				// halfway mark, reload once to re-subscribe now that the publisher is up.
+				if (!reloaded && Date.now() - start > timeoutMs / 2) {
+					reloaded = true;
+					await page.reload({ waitUntil: "load" }).catch(() => {});
+				}
+				await new Promise((r) => setTimeout(r, 250));
 			}
-			await new Promise((r) => setTimeout(r, 250));
+			console.error(`decoded ${frames} frames from ${broadcast} (${variant})`);
+			code = frames > 0 ? 0 : 1;
 		}
-		console.error(`decoded ${frames} frames from ${broadcast} (${variant})`);
-		code = frames > 0 ? 0 : 1;
+	} catch (caught) {
+		error = caught;
+	} finally {
+		if (artifactDir) {
+			if (code === 0) await context.tracing.stop();
+			else {
+				await diagnostics.write(artifactDir, artifactName, error);
+				await context.tracing.stop({ path: join(artifactDir, `${artifactName}.zip`) });
+			}
+		}
 	}
 } finally {
 	await browser.close().catch(() => {});
 	server.stop(true);
 }
+if (error) throw error;
 process.exit(code);

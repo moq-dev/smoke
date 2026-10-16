@@ -39,6 +39,7 @@ jobs:
     # the limit to 1000 req/hr per token.
     env:
       GITHUB_TOKEN: ${{ github.token }}
+      SMOKE_BROWSER_ARTIFACTS: ${{ github.workspace }}/clients/js/artifacts
 
     strategy:
       fail-fast: false
@@ -233,6 +234,7 @@ jobs:
         run: |
           cd clients/js
           bun install
+          bun test diagnostics.test.ts
           bunx playwright install-deps chromium
 
       # Fail loudly if we've drifted off "latest": a committed lock file, a moq
@@ -261,6 +263,14 @@ jobs:
             --publishers "rust,python,go,$browser" \
             --subscribers "$subs" \
             --timeout 30
+
+      - name: Upload browser failure diagnostics
+        if: ${{ !cancelled() && hashFiles('clients/js/artifacts/*') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-failures-${{ matrix.os }}-${{ matrix.channel }}
+          path: clients/js/artifacts/
+          if-no-files-found: error
 
       # Quick proof the harness can actually report failure.
       - name: Negative control
