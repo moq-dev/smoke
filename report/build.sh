@@ -7,8 +7,8 @@
 #
 # A missing LOGS_DIR just leaves the page without logs.
 # History lives only on the published site: pass the currently deployed
-# history.json URL and this run is appended to it (last 60 runs kept). A missing
-# or unreadable history just starts a new one.
+# history.json URL and this run is appended to it (last 60 runs kept). A history
+# that can't be fetched starts a new one; one that fetches but doesn't parse fails.
 set -euo pipefail
 
 results="$1"
@@ -25,18 +25,20 @@ if [[ -d "$logs" ]]; then
     cp -r "$logs" "$out/logs"
 fi
 
-previous="[]"
-if [[ -n "$history_url" ]]; then
-    fetched=$(curl -sfL --retry 3 "$history_url" 2>/dev/null || true)
-    if jq -e 'type == "array"' >/dev/null 2>&1 <<<"$fetched"; then
-        previous="$fetched"
-    else
-        echo "no previous history at $history_url; starting fresh" >&2
-    fi
+previous=$(mktemp)
+trap 'rm -f "$previous"' EXIT
+if [[ -z "$history_url" ]] || ! curl -sfL --retry 3 -o "$previous" "$history_url"; then
+    echo "no previous history${history_url:+ at $history_url}; starting fresh" >&2
+    echo "[]" >"$previous"
+elif ! jq -e 'type == "array"' "$previous" >/dev/null; then
+    echo "malformed history at $history_url" >&2
+    exit 1
 fi
 
-jq --argjson previous "$previous" '
-    $previous + [{
+# --slurpfile, not --argjson: the history outgrows the kernel's 128 KiB limit on
+# a single argument.
+jq --slurpfile previous "$previous" '
+    $previous[0] + [{
         generated,
         run_url,
         endpoints: (.endpoints | map({key: .url, value: {
