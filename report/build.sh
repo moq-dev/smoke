@@ -30,7 +30,7 @@ trap 'rm -f "$previous"' EXIT
 if [[ -z "$history_url" ]] || ! curl -sfL --retry 3 -o "$previous" "$history_url"; then
     echo "no previous history${history_url:+ at $history_url}; starting fresh" >&2
     echo "[]" >"$previous"
-elif ! jq -e 'type == "array"' "$previous" >/dev/null; then
+elif ! jq -se 'length == 1 and (.[0] | type == "array")' "$previous" >/dev/null; then
     echo "malformed history at $history_url" >&2
     exit 1
 fi
