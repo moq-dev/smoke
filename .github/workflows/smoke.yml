@@ -3,6 +3,10 @@ name: Smoke
 on:
   # Manual on-demand runs.
   workflow_dispatch:
+    inputs:
+      history_url:
+        description: Seed the relay report history from this URL instead of the deployed site
+        required: false
   # On every PR: the harness itself (smoke.sh / token.sh / clients) is what
   # changes here, so run the matrix against the published packages to catch a
   # broken cell before it merges. Published-package regressions still surface
@@ -39,6 +43,7 @@ jobs:
     # the limit to 1000 req/hr per token.
     env:
       GITHUB_TOKEN: ${{ github.token }}
+      SMOKE_BROWSER_ARTIFACTS: ${{ github.workspace }}/clients/js/artifacts
 
     strategy:
       fail-fast: false
@@ -233,6 +238,7 @@ jobs:
         run: |
           cd clients/js
           bun install
+          bun test diagnostics.test.ts
           bunx playwright install-deps chromium
 
       # Fail loudly if we've drifted off "latest": a committed lock file, a moq
@@ -261,6 +267,14 @@ jobs:
             --publishers "rust,python,go,$browser" \
             --subscribers "$subs" \
             --timeout 30
+
+      - name: Upload browser failure diagnostics
+        if: ${{ !cancelled() && hashFiles('clients/js/artifacts/*') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-failures-${{ matrix.os }}-${{ matrix.channel }}
+          path: clients/js/artifacts/
+          if-no-files-found: error
 
       # Quick proof the harness can actually report failure.
       - name: Negative control
@@ -340,15 +354,19 @@ jobs:
 
       # The HTML report (report/index.html) on GitHub Pages. Built even when a
       # required relay failed, since that's exactly the run worth looking at.
-      # History carries forward from the currently deployed site.
+      # History carries forward from the currently deployed site. A failed build
+      # uploads nothing, so a broken history never replaces the deployed one.
       - name: Build report
+        id: report
         if: ${{ !cancelled() && hashFiles('results.json') != '' }}
+        env:
+          HISTORY_URL: ${{ inputs.history_url }}
         run: |
           owner="${GITHUB_REPOSITORY%%/*}"
-          report/build.sh results.json logs _site "https://${owner}.github.io/${GITHUB_REPOSITORY#*/}/history.json"
+          report/build.sh results.json logs _site "${HISTORY_URL:-https://${owner}.github.io/${GITHUB_REPOSITORY#*/}/history.json}"
 
       - name: Upload report
-        if: ${{ !cancelled() && hashFiles('_site/index.html') != '' }}
+        if: ${{ !cancelled() && steps.report.outcome == 'success' }}
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
 
   # Publish the relay report from main only (nightly or on demand), never from a PR.
