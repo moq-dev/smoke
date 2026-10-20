@@ -48,37 +48,36 @@ function closeActiveConnection(): void {
 }
 
 async function run(): Promise<void> {
-	const connection = await Moq.Connection.connect(new URL(url as string), { signal: abort.signal });
+	// Since @moq/net 0.4.0 a session doesn't consume broadcasts itself: it feeds the
+	// peer's announcements into an origin, and consumers request paths from that.
+	const origin = new Moq.Origin.Producer();
+	// smoke.sh sets this on external relays that are not the WebSocket column.
+	const websocket = process.env.SMOKE_WEBSOCKET === "0" ? { enabled: false as const } : undefined;
+	const connection = await Moq.Connection.connect({
+		url: new URL(url as string),
+		consume: origin,
+		signal: abort.signal,
+		websocket,
+	});
 	activeConnection = connection;
+	// Same shape as the Rust clients' log line, so the harness records the version.
+	console.error(`connected version=${connection.version}`);
+
+	// Wait for the broadcast to be announced before subscribing. Subscribing to a
+	// track on a broadcast the publisher hasn't announced yet races the relay,
+	// which resets the catalog stream (RESET_STREAM). `announced: true` folds that
+	// wait into the request; the outer timeout below bounds it.
+	const request = origin.request(Moq.Path.from(broadcast as string), { announced: true });
 	try {
-		const path = Moq.Path.from(broadcast as string);
-
-		// Wait for the broadcast to be announced before subscribing. Subscribing to a
-		// track on a broadcast the publisher hasn't announced yet races the relay,
-		// which resets the catalog stream (RESET_STREAM). The Rust API folds this
-		// wait into consume(); the JS API leaves it to the caller. The outer timeout
-		// below bounds how long we wait.
-		const announced = connection.announced(path);
-		try {
-			for (;;) {
-				const entry = await announced.next();
-				if (!entry) throw new Error("connection closed before broadcast was announced");
-				// Entry paths are relative to the prefix passed to announced() -- here
-				// the exact broadcast -- so any active entry is the one we asked for.
-				if (entry.active) break;
-			}
-		} finally {
-			announced.close();
-		}
-
-		const bc = connection.consume(path);
+		let bc = request.active.peek();
+		while (!bc) bc = await request.active.changed();
 
 		// The .hang catalog lives on the Catalog.TRACK ("catalog.json") track, one
 		// JSON snapshot per frame validated against RootSchema. (@moq/hang 0.3.0
 		// dropped the Catalog.Consumer helper, so read the frames directly.) A lazy
 		// publisher may announce video in a later update, so keep pulling until one
 		// carries a video track.
-		const catalog = bc.subscribe(Catalog.TRACK, { priority: Catalog.PRIORITY.catalog });
+		const catalog = bc.track(Catalog.TRACK).subscribe({ priority: Catalog.PRIORITY.catalog });
 		let videoTrack: string | undefined;
 		while (!videoTrack) {
 			const group = await catalog.recvGroup();
@@ -90,24 +89,33 @@ async function run(): Promise<void> {
 			if (renditions) videoTrack = Object.keys(renditions)[0];
 		}
 
-		const video = bc.subscribe(videoTrack, { priority: 0 });
+		const video = bc.track(videoTrack).subscribe({ priority: 0 });
 		let total = 0;
 		for (;;) {
 			const group = await video.recvGroup();
 			if (!group) break;
-			for (;;) {
-				const frame = await group.readFrame();
-				if (!frame) break;
-				total += frame.payload.byteLength;
-				if (total > 0) {
-					console.error(`received ${total} bytes from ${broadcast}`);
-					return;
+			try {
+				for (;;) {
+					const frame = await group.readFrame();
+					if (!frame) break;
+					total += frame.payload.byteLength;
+					if (total > 0) {
+						console.error(`received ${total} bytes from ${broadcast}`);
+						return;
+					}
 				}
+			} catch (err) {
+				// A relay may reset a group stream it has given up on (e.g. a stale
+				// group once a newer one starts). Players skip to the next group, so
+				// do the same; the track itself failing still ends in recvGroup().
+				console.error(`group reset, waiting for the next: ${err instanceof Error ? err.message : String(err)}`);
 			}
 		}
 		throw new Error("no frame data received");
 	} finally {
+		request.close();
 		if (activeConnection === connection) closeActiveConnection();
+		origin.close();
 	}
 }
 
@@ -126,7 +134,14 @@ const timeout = new Promise<never>((_, reject) => {
 try {
 	await Promise.race([run(), timeout]);
 } catch (err) {
-	console.error(`error: ${err instanceof Error ? err.message : String(err)}`);
+	// AggregateError from Promise.any has an empty message; the cause is in .errors.
+	const message =
+		err instanceof AggregateError
+			? err.errors.map((e) => (e instanceof Error ? e.message : String(e))).filter(Boolean).join("; ")
+			: err instanceof Error
+				? err.message
+				: String(err);
+	console.error(`error: ${message || String(err)}`);
 	process.exitCode = 1;
 } finally {
 	if (timeoutId !== undefined) clearTimeout(timeoutId);

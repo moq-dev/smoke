@@ -45,25 +45,25 @@ for dep in @moq/net @moq/hang @moq/web-transport; do
         fail=1
     fi
 done
-# The token client (@moq/token, driven by token.sh under node and bun) must be latest.
-ver=$(grep -oE "\"@moq/token\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" clients/token/js/package.json | sed -E 's/.*"([^"]*)"$/\1/')
-if [[ "$ver" == "latest" ]]; then note ok "@moq/token -> \"$ver\""; else
-    note FAIL "@moq/token pinned to \"$ver\" (want \"latest\")"
+# The token client (@moq/auth, driven by token.sh under node and bun) must be latest.
+ver=$(grep -oE "\"@moq/auth\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" clients/token/js/package.json | sed -E 's/.*"([^"]*)"$/\1/')
+if [[ "$ver" == "latest" ]]; then note ok "@moq/auth -> \"$ver\""; else
+    note FAIL "@moq/auth pinned to \"$ver\" (want \"latest\")"
     fail=1
 fi
 # The token Docker image must be the unpinned (:latest) tag, pulled fresh each run.
 # shellcheck disable=SC2016  # grepping for these literal strings in token.sh; the $vars must NOT expand here
-if grep -qF 'DOCKER_TOKEN_IMAGE:-moqdev/moq-token-cli}' token.sh && grep -qF '"$DOCKER" pull "$DOCKER_TOKEN_IMAGE"' token.sh; then
-    note ok "moqdev/moq-token-cli -> :latest (pulled each run)"
+if grep -qF 'DOCKER_TOKEN_IMAGE:-moqdev/moq}' token.sh && grep -qF '"$DOCKER" pull "$DOCKER_TOKEN_IMAGE"' token.sh; then
+    note ok "moqdev/moq (token cell) -> :latest (pulled each run)"
 else
-    note FAIL "token.sh no longer pulls an unpinned moqdev/moq-token-cli :latest"
+    note FAIL "token.sh no longer pulls an unpinned moqdev/moq :latest"
     fail=1
 fi
 # The media Docker channel (relay + cli wrappers) must use the unpinned (:latest)
 # images, and CI must pull them fresh.
-if grep -qF 'moqdev/moq-relay}' clients/docker/moq-relay && grep -qF 'moqdev/moq-cli}' clients/docker/moq &&
+if grep -qF 'moqdev/moq-relay}' clients/docker/moq-relay && grep -qF 'moqdev/moq}' clients/docker/moq &&
     grep -qF 'docker pull moqdev/moq-relay' .github/workflows/smoke.yml; then
-    note ok "moqdev/moq-relay + moqdev/moq-cli -> :latest (pulled each run)"
+    note ok "moqdev/moq-relay + moqdev/moq -> :latest (pulled each run)"
 else
     note FAIL "the moqdev relay/cli Docker images are no longer unpinned :latest + pulled fresh"
     fail=1
@@ -82,29 +82,52 @@ else
     note FAIL "smoke.sh no longer installs moq-rs unpinned"
     fail=1
 fi
-if grep -q 'go get "github.com/moq-dev/moq-go@latest"' smoke.sh; then
-    note ok "moq-go -> go get @latest"
+if grep -q 'go get "moq.dev/moq@latest"' smoke.sh; then
+    note ok "moq.dev/moq -> go get @latest"
 else
-    note FAIL "smoke.sh no longer go-gets moq-go @latest"
+    note FAIL "smoke.sh no longer go-gets moq.dev/moq @latest"
     fail=1
 fi
 # Both relays and the local integrity client deliberately follow their
 # repositories' default branches. A rev/tag/branch would silently turn this
 # into a stale snapshot rather than a Git-head smoke test.
-# shellcheck disable=SC2016  # the grep checks for the literal variable reference in cloudflare.sh
+# shellcheck disable=SC2016  # the greps match literal variable references
+builds_head() {
+    # builds_head <script> <repo variable>: the script builds that repo through
+    # its build_git, whose shallow clone takes the default branch (no --branch).
+    grep -qF "build_git \"\$$2\"" "$1" &&
+        grep -qF 'git clone --quiet --depth 1 "$repo" "$dir"' "$1"
+}
 if grep -q 'git = "https://github.com/cloudflare/moq-rs"' clients/cloudflare/Cargo.toml &&
     ! grep -qE '(^|[,{[:space:]])(rev|tag|branch)[[:space:]]*=' clients/cloudflare/Cargo.toml &&
-    grep -q 'cargo install --quiet --locked --git "$CLOUDFLARE_MOQ_REPO"' cloudflare.sh; then
+    builds_head cloudflare.sh CLOUDFLARE_MOQ_REPO; then
     note ok "cloudflare/moq-rs -> unpinned Git default branch"
 else
     note FAIL "cloudflare/moq-rs is no longer resolved from the unpinned Git default branch"
     fail=1
 fi
-# shellcheck disable=SC2016  # the grep checks for the literal variable reference in cloudflare.sh
-if grep -q 'cargo install --quiet --locked --git "$MOQ_REPO"' cloudflare.sh; then
+if builds_head cloudflare.sh MOQ_REPO; then
     note ok "moq-dev/moq relay -> unpinned Git default branch"
 else
     note FAIL "moq-dev/moq relay is no longer resolved from the unpinned Git default branch"
+    fail=1
+fi
+# Moxygen publishes its source-head interop client as an amd64 image. Keep the
+# moving tag and pull it on every run; the wire draft is pinned separately for
+# deliberate protocol compatibility.
+# shellcheck disable=SC2016  # the grep checks for literal variable references in moxygen.sh
+if grep -qF 'ghcr.io/facebookexperimental/moxygen-interop-client:latest-amd64}' moxygen.sh &&
+    grep -qF '"$DOCKER" pull --platform linux/amd64 "$MOXYGEN_IMAGE"' moxygen.sh; then
+    note ok "facebookexperimental/moxygen interop client -> latest-amd64 (pulled each run)"
+else
+    note FAIL "moxygen.sh no longer pulls the latest source-head interop client image"
+    fail=1
+fi
+# shellcheck disable=SC2016  # the grep checks for the literal variable reference in moxygen.sh
+if builds_head moxygen.sh MOQ_REPO; then
+    note ok "moxygen lane moq-dev/moq relay -> unpinned Git default branch"
+else
+    note FAIL "moxygen lane no longer resolves moq-dev/moq from the unpinned Git default branch"
     fail=1
 fi
 # Swift: `from: "x"` floats to the newest compatible; an `.exact(` pin would not.

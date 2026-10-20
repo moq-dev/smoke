@@ -26,6 +26,17 @@ CLIENT="${CLOUDFLARE_CLIENT_BIN:-}"
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# build_git <repo> <package> <dir>: build one package from a repo's default
+# branch with its committed Cargo.lock, into <dir>/target/release. A plain
+# `cargo build` in a checkout rather than `cargo install --git`: a compile cache
+# (mbx in CI) reuses unchanged crates across builds, but not across installs.
+build_git() {
+    local repo="$1" package="$2" dir="$3"
+    git clone --quiet --depth 1 "$repo" "$dir" &&
+        cargo build --quiet --release --locked --manifest-path "$dir/Cargo.toml" -p "$package" \
+            --target-dir "$dir/target"
+}
+
 kill_tree() {
     local pid="$1" child
     for child in $(pgrep -P "$pid" 2>/dev/null || true); do kill_tree "$child"; done
@@ -46,6 +57,7 @@ for tool in curl openssl pgrep timeout; do
 done
 if [[ -z "$CLOUDFLARE_RELAY" || -z "$MOQ_RELAY" || -z "$CLIENT" ]]; then
     have cargo || missing+=("cargo")
+    have git || missing+=("git")
 fi
 if [[ ${#missing[@]} -gt 0 ]]; then
     echo "error: missing required tools: ${missing[*]}" >&2
@@ -57,10 +69,8 @@ if [[ -z "$CLOUDFLARE_RELAY" ]]; then
     # Follow Git HEAD, but honor that checkout's committed Cargo.lock. Without
     # --locked Cargo currently selects a newer hyper-util that does not compile
     # with moq-rs's hyper-serve dependency.
-    if cargo install --quiet --locked --git "$CLOUDFLARE_MOQ_REPO" \
-        --root "$TMP/install" --target-dir "$TMP/target" moq-relay-ietf \
-        >"$TMP/relay-build.log" 2>&1; then
-        CLOUDFLARE_RELAY="$TMP/install/bin/moq-relay-ietf"
+    if build_git "$CLOUDFLARE_MOQ_REPO" moq-relay-ietf "$TMP/cloudflare-moq" >"$TMP/relay-build.log" 2>&1; then
+        CLOUDFLARE_RELAY="$TMP/cloudflare-moq/target/release/moq-relay-ietf"
     else
         echo "error: failed to build moq-relay-ietf" >&2
         sed 's/^/  /' "$TMP/relay-build.log" >&2 || true
@@ -70,10 +80,8 @@ fi
 
 if [[ -z "$MOQ_RELAY" ]]; then
     echo "building moq-relay from $MOQ_REPO (latest default branch)..."
-    if cargo install --quiet --locked --git "$MOQ_REPO" \
-        --root "$TMP/moq-install" --target-dir "$TMP/moq-target" moq-relay \
-        >"$TMP/moq-relay-build.log" 2>&1; then
-        MOQ_RELAY="$TMP/moq-install/bin/moq-relay"
+    if build_git "$MOQ_REPO" moq-relay "$TMP/moq" >"$TMP/moq-relay-build.log" 2>&1; then
+        MOQ_RELAY="$TMP/moq/target/release/moq-relay"
     else
         echo "error: failed to build moq-relay" >&2
         sed 's/^/  /' "$TMP/moq-relay-build.log" >&2 || true
@@ -136,11 +144,12 @@ start_relay() {
             ready="$HTTPS_URL/fingerprint"
             ;;
         moq-dev)
-            "$MOQ_RELAY" --server-bind "127.0.0.1:${PORT}" \
-                --tls-cert "$TMP/localhost.crt" --tls-key "$TMP/localhost.key" \
+            # Git HEAD relay: the >= 0.15 flag names and pattern-based public auth.
+            "$MOQ_RELAY" --listen "127.0.0.1:${PORT}" \
+                --listen-tls-cert "$TMP/localhost.crt" --listen-tls-key "$TMP/localhost.key" \
                 --web-https-listen "127.0.0.1:${PORT}" \
                 --web-https-cert "$TMP/localhost.crt" --web-https-key "$TMP/localhost.key" \
-                --auth-public "" >"$TMP/relay-moq-dev.log" 2>&1 &
+                --auth-public "**" >"$TMP/relay-moq-dev.log" 2>&1 &
             ready="$HTTPS_URL/certificate.sha256"
             ;;
         *)
@@ -183,11 +192,14 @@ run_round() {
 
     # Both relays reject an unknown namespace instead of holding an early
     # subscription. Probe until PUBLISH_NAMESPACE is accepted; exit 75 is the
-    # client's specific unknown-namespace signal, while every other error fails
-    # immediately. Payload validation then runs exactly once and cannot be masked.
+    # client's specific unknown-namespace signal. A probe can also remain pending
+    # while publication is settling, so bound each attempt to two seconds and
+    # retry timeout(1)'s exit 124 within the outer deadline. Every semantic error
+    # still fails immediately. Payload validation then runs exactly once and
+    # cannot be masked.
     local subscribe_deadline=$((SECONDS + 10)) probe_ok=0 probe_status
     while true; do
-        if timeout -k 1 10 "$CLIENT" --url "$url" --namespace "$namespace" \
+        if timeout -k 1 2 "$CLIENT" --url "$url" --namespace "$namespace" \
             --tls-disable-verify --tls-root "$TMP/localhost.crt" \
             --delivery "$delivery" --object-size "$object_size" \
             probe >"$TMP/probe-${implementation}-${transport}-${delivery}.log" 2>&1; then
@@ -196,14 +208,14 @@ run_round() {
         else
             probe_status=$?
         fi
-        [[ "$probe_status" -eq 75 ]] || break
+        [[ "$probe_status" -eq 75 || "$probe_status" -eq 124 ]] || break
         kill -0 "$PUB_PID" 2>/dev/null || break
         ((SECONDS >= subscribe_deadline)) && break
         sleep 0.25
     done
 
     if [[ "$probe_ok" -ne 1 ]]; then
-        echo "  FAIL  $name (namespace publication was not accepted)"
+        echo "  FAIL  $name (namespace publication was not accepted; probe exit $probe_status)"
         sed 's/^/        publisher: /' "$TMP/pub-${implementation}-${transport}-${delivery}.log" >&2 || true
         sed 's/^/        probe: /' "$TMP/probe-${implementation}-${transport}-${delivery}.log" >&2 || true
         sed 's/^/        relay: /' "$TMP/relay-$implementation.log" >&2 || true

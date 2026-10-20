@@ -12,7 +12,7 @@ use moq_transport::message::RequestErrorCode;
 use moq_transport::{
     coding::TrackNamespace,
     serve::{Datagram, ServeError, Track, TrackReader, TrackReaderMode, Tracks},
-    session::{Publisher, Subscriber},
+    session::{Publisher, SessionError, Subscriber},
 };
 use url::Url;
 
@@ -88,6 +88,18 @@ enum Command {
 enum Outcome {
     Complete,
     NamespaceUnavailable,
+}
+
+fn retryable_probe_request_error(err: &ServeError) -> bool {
+    matches!(err, ServeError::NotFound | ServeError::NotFoundWithId(_, _))
+        || matches!(
+            err,
+            ServeError::Closed(code) if *code == RequestErrorCode::DoesNotExist as u64
+        )
+}
+
+fn retryable_probe_session_error(err: &SessionError) -> bool {
+    matches!(err, SessionError::Serve(ServeError::Cancel))
 }
 
 #[tokio::main]
@@ -257,19 +269,24 @@ async fn probe(
     let accept_namespaces = accept_namespaces(subscriber.clone());
 
     tokio::select! {
-        res = session.run() => {
-            res.context("probe session failed")?;
-            bail!("probe session ended before subscription acceptance")
+        res = session.run() => match res {
+            // An early SUBSCRIBE can race PUBLISH_NAMESPACE. Depending on which
+            // side closes first, moq-rs surfaces that rejection either on the
+            // request or as a cancelled probe session. Both mean "retry the
+            // readiness probe"; the publisher-liveness/deadline checks remain
+            // in cloudflare.sh.
+            Err(err) if retryable_probe_session_error(&err) => Ok(Outcome::NamespaceUnavailable),
+            res => {
+                res.context("probe session failed")?;
+                bail!("probe session ended before subscription acceptance")
+            }
         },
         res = subscriber.subscribe_open(track_writer) => match res {
             Ok(_subscription) => {
                 println!("subscription accepted");
                 Ok(Outcome::Complete)
             },
-            Err(ServeError::NotFound | ServeError::NotFoundWithId(_, _)) => {
-                Ok(Outcome::NamespaceUnavailable)
-            },
-            Err(ServeError::Closed(code)) if code == RequestErrorCode::DoesNotExist as u64 => {
+            Err(err) if retryable_probe_request_error(&err) => {
                 Ok(Outcome::NamespaceUnavailable)
             },
             Err(err) => Err(err).context("probe subscription failed"),
@@ -397,5 +414,27 @@ mod tests {
         let mut payload = payload(7, 900).to_vec();
         payload[8] ^= 1;
         assert!(validate(&payload, 900).is_err());
+    }
+
+    #[test]
+    fn readiness_race_errors_are_retryable() {
+        assert!(retryable_probe_session_error(&SessionError::Serve(
+            ServeError::Cancel
+        )));
+        assert!(retryable_probe_request_error(&ServeError::NotFound));
+        assert!(retryable_probe_request_error(&ServeError::Closed(
+            RequestErrorCode::DoesNotExist as u64
+        )));
+    }
+
+    #[test]
+    fn unrelated_probe_errors_are_not_retryable() {
+        assert!(!retryable_probe_session_error(&SessionError::Internal));
+        assert!(!retryable_probe_request_error(&ServeError::Closed(
+            RequestErrorCode::Unauthorized as u64
+        )));
+        assert!(!retryable_probe_request_error(&ServeError::Internal(
+            "test".into()
+        )));
     }
 }
