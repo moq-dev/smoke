@@ -30,6 +30,7 @@
             git
             ffmpeg
             curl
+            openssl # throwaway localhost certificate for cloudflare.sh
             jq
             coreutils # GNU `timeout` (macOS lacks it)
             procps # `pgrep`
@@ -42,7 +43,7 @@
             uv
             python3
 
-            # go client (go get moq-dev/moq-go); cgo links the prebuilt libmoq_ffi.a
+            # go client (go get moq.dev/moq); cgo links the prebuilt libmoq_ffi.a
             go
 
             # kotlin client (dev.moq:moq from Maven Central) on the JVM

@@ -3,12 +3,14 @@
 clients/js/node_modules/
 clients/js/dist-vite/
 clients/js/dist-esbuild/
+clients/js/artifacts/
 clients/js-native/node_modules/
 clients/token/js/node_modules/
 clients/go/bin/
 clients/swift/.build/
 clients/kotlin/.gradle/
 clients/kotlin/build/
+clients/cloudflare/target/
 *.log
 
 # No committed PACKAGE lock files: every run must re-resolve the moq packages
