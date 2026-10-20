@@ -29,7 +29,7 @@ EXTRA_ENDPOINTS=(
 )
 # Relays that speak moq-dev's WebSocket binding. Each of their http(s) endpoints
 # gains a ws(s) twin. Add a key here when that implementation actually serves it.
-WEBSOCKET_KEYS="moq-dev-rs,stitcher-moq"
+WEBSOCKET_KEYS="moq-dev-rs"
 ONLY=""
 JSON_OUT=""
 LOGS_OUT=""
@@ -103,6 +103,16 @@ websocket_url() {
     esac
 }
 
+# publish_path <key>: the path a relay permits anonymous publishing under, for
+# a relay that registers path-less endpoints but refuses anonymous root
+# broadcasts. The URL path roots every smoke broadcast below it.
+publish_path() {
+    case "$1" in
+        stitcher-moq) echo /moq-test ;;
+        *) return 1 ;;
+    esac
+}
+
 seen_url() {
     # seen_url <url>: true when selected.tsv already has this endpoint.
     awk -F '\t' -v url="$1" '$3 == url { found = 1 } END { exit !found }' "$TMP/selected.tsv"
@@ -126,6 +136,9 @@ relay_args=()
 : >"$TMP/selected.tsv"
 while IFS=$'\t' read -r key name url; do
     [[ -z "$ONLY" ]] || in_list "$key" "$ONLY" || continue
+    if [[ "$url" =~ ^[a-z][a-z0-9+.-]*://[^/]+/?$ ]] && path=$(publish_path "$key"); then
+        url="${url%/}$path"
+    fi
     if seen_url "$url"; then
         continue
     fi
