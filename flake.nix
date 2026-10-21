@@ -63,6 +63,12 @@
             # if clients/js/package.json pins anything else.
             playwright-driver.browsers
 
+            # conformance.sh builds the C++ interop runner (C++20 via stdenv)
+            cmake
+            pkg-config
+            sqlite
+            perl
+
             # `just check` linters
             shellcheck
             shfmt

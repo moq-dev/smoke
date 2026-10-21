@@ -466,3 +466,37 @@ jobs:
         # (moq-dev/moq quest/m1/smoke-moxygen.md).
         continue-on-error: true
         run: ./moxygen.sh
+
+  conformance:
+    name: moq-lite conformance
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # The runner builds from Git HEAD in a few minutes; 27 scenarios per
+    # transport, each bounded by the runner's own timeouts.
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: System deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg curl coreutils jq openssl cmake g++ pkg-config perl \
+            libssl-dev libsqlite3-dev
+
+      # apt is the quickest channel to install; only the CLI is under test.
+      - name: Install moq CLI (apt)
+        run: |
+          curl -fsSL https://apt.moq.dev/moq-keyring.gpg \
+            | sudo tee /usr/share/keyrings/moq-keyring.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/moq-keyring.gpg] https://apt.moq.dev stable main" \
+            | sudo tee /etc/apt/sources.list.d/moq.list
+          sudo apt-get update
+          sudo apt-get install -y moq-cli
+
+      - name: moq-lite conformance
+        run: ./conformance.sh
