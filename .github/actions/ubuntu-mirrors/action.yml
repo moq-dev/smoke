@@ -1,0 +1,15 @@
+name: Ubuntu archive mirrors
+description: Use Ubuntu's archives without the slow Azure mirror
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        # Hosted Ubuntu images use this mirror list for all Ubuntu suites.
+        # Azure transfers can stay slow enough to exhaust the job without
+        # triggering apt's connection timeout. Keep the other image mirrors.
+        # https://github.com/actions/runner-images/issues/12949
+        grep -qF 'mirror+file:/etc/apt/apt-mirrors.txt' /etc/apt/sources.list.d/ubuntu.sources
+        sudo sed -i '\|^http://azure\.archive\.ubuntu\.com/|d' /etc/apt/apt-mirrors.txt
+        test -s /etc/apt/apt-mirrors.txt
+        cat /etc/apt/apt-mirrors.txt
