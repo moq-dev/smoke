@@ -85,7 +85,7 @@ negative *args:
 freshness:
     ./freshness.sh
 
-# Lint the harness. shfmt discovers every shell script (incl. the extensionless
+# Lint the harness and test release discovery. shfmt discovers every shell script (incl. the extensionless
 # clients/docker/* wrappers) and reads .editorconfig for style; shellcheck lints
 # the same set. Each tool is guarded so it skips when not on PATH (nix develop
 # provides them all).
@@ -94,6 +94,7 @@ check:
     @if command -v shellcheck >/dev/null 2>&1 && command -v shfmt >/dev/null 2>&1; then shellcheck $(shfmt -f .); else echo "shellcheck: skipped"; fi
     @command -v actionlint >/dev/null && actionlint || echo "actionlint: skipped"
     just freshness
+    ./tests/release.sh
 
 # Compile-check and unit-test the local integrity client against the current
 # cloudflare/moq-rs Git dependencies. The end-to-end relay check is `just cloudflare`.
