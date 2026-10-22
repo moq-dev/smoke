@@ -96,6 +96,10 @@ jobs:
         with:
           gradle-version: "8.14.4"
 
+      - name: Ubuntu archive mirrors
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/ubuntu-mirrors
+
       - name: System deps (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -320,6 +324,9 @@ jobs:
           persist-credentials: false
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Ubuntu archive mirrors
+        uses: ./.github/actions/ubuntu-mirrors
 
       - name: System deps
         run: |
