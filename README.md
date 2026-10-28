@@ -14,9 +14,10 @@ This repo installs the public [moq](https://github.com/moq-dev/moq) packages and
 | Public relays | `just relays` | Rust publisher and subscriber through every relay in the [moq-interop-runner](https://github.com/englishm/moq-interop-runner) registry. CI publishes with Rust and the browser (`js-web`) and subscribes with Rust, `js-web`, and `js-bun`. On those relays `js-web` and `js-bun` run only on WebTransport (`@moq/web-transport` has no raw QUIC mode); a client that does not belong is omitted. WebSocket is its own column for the relays in `WEBSOCKET_KEYS` (`moq-dev-rs` and `stitcher-moq`): each of their `http(s)` endpoints also runs as `ws(s)`, and every other relay keeps that fallback off. A relay that refuses anonymous root broadcasts is dialed on the path `publish_path` names (`stitcher-moq` publishes under `/moq-test`). That run is what the [results page](https://moq-dev.github.io/smoke/) shows. Only `--required` relays fail the run; the default is moq-dev's `cdn.moq.dev`, including its WebSocket endpoint. |
 | Cloudflare | `just cloudflare` | Relays built from the default branches of [cloudflare/moq-rs](https://github.com/cloudflare/moq-rs) and moq-dev/moq, driven by a Cloudflare client over WebTransport and raw QUIC. |
 | moxygen | `just moxygen` | Meta's [`moxygen`](https://github.com/facebookexperimental/moxygen) interop client through the latest moq-dev relay. Needs Linux Docker. |
+| Conformance | `just conformance` | The `moq` CLI publishes moq-lite-06 to [moq-contribution-interop-runner](https://github.com/mondain/moq-contribution-interop-runner), built from its default branch, which scores it against the draft text over WebTransport and raw QUIC. Any failing requirement row fails the lane. |
 | Tokens | `just token`, `just token-full` | `moq auth` and npm [`@moq/auth`](https://www.npmjs.com/package/@moq/auth) mint and verify each other's JWTs, and each verifier rejects a tampered token. |
 
-Hang media, Cloudflare, and moxygen each have their own lane.
+Hang media, Cloudflare, moxygen, and conformance each have their own lane.
 
 CI runs the matrix on pull requests and nightly: [`.github/workflows/smoke.yml`](.github/workflows/smoke.yml).
 

@@ -130,6 +130,13 @@ else
     note FAIL "moxygen lane no longer resolves moq-dev/moq from the unpinned Git default branch"
     fail=1
 fi
+# shellcheck disable=SC2016  # the grep checks for literal variable references in conformance.sh
+if grep -qF 'git clone --quiet --depth 1 "$RUNNER_REPO" "$runner"' conformance.sh; then
+    note ok "moq-contribution-interop-runner -> unpinned Git default branch"
+else
+    note FAIL "conformance.sh no longer builds the runner from the unpinned Git default branch"
+    fail=1
+fi
 # Swift: `from: "x"` floats to the newest compatible; an `.exact(` pin would not.
 if grep -q '\.exact(' clients/swift/Package.swift; then
     note FAIL "moq-swift pinned with .exact( (want from:, which floats to latest)"
